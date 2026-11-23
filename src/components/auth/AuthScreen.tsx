@@ -143,7 +143,7 @@ export function AuthScreen() {
                 </span>
               </div>
               <p className="text-xs sm:text-sm font-semibold text-zinc-600">
-                Gestão Escolar + ClassDojo + RPG Octalysis + Salinha Híbrida
+                Gestão Escolar + Pulso da Turma + Missões RPG + Espaço Híbrido
               </p>
             </div>
           </div>
@@ -151,7 +151,7 @@ export function AuthScreen() {
           <div className="sketch-card-sm px-3.5 py-2 bg-violet-100 text-xs font-semibold text-violet-950 max-w-md">
             <strong>Dica Multi-Aba:</strong> Abra 2 abas do navegador (ex: uma logada como{" "}
             <code className="font-mono font-bold">prof.rafael</code> e outra como{" "}
-            <code className="font-mono font-bold">sofia</code>) para testar pontos, quests e o chat da Salinha em tempo real!
+            <code className="font-mono font-bold">sofia</code>) para testar pontos, quests e o Espaço Híbrido em tempo real!
           </div>
         </div>
 
@@ -443,7 +443,7 @@ export function AuthScreen() {
             {/* Student Accounts */}
             <div className="space-y-2">
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">
-                Contas de Estudantes (8º Ano A · Destaque e Atenção CD8)
+                Contas de Estudantes (8º Ano A · Destaque e Atenção)
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {featuredStudents.map((acc) => {

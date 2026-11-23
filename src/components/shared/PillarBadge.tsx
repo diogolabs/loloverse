@@ -2,28 +2,28 @@
 
 import React from "react";
 import { Compass, Lightbulb, Trophy, Users } from "lucide-react";
-import { OCTALYSIS_META } from "@/data/mockData";
-import { OctalysisPillar } from "@/types";
+import { PILLAR_META } from "@/data/mockData";
+import { EngagementPillar } from "@/types";
 
-interface OctalysisBadgeProps {
-  pillar: OctalysisPillar;
+interface PillarBadgeProps {
+  pillar: EngagementPillar;
   compact?: boolean;
 }
 
-const ICONS: Record<OctalysisPillar, React.ReactNode> = {
+const ICONS: Record<EngagementPillar, React.ReactNode> = {
   proposito: <Compass className="w-3.5 h-3.5" />,
   maestria: <Trophy className="w-3.5 h-3.5" />,
   criatividade: <Lightbulb className="w-3.5 h-3.5" />,
   social: <Users className="w-3.5 h-3.5" />,
 };
 
-export function OctalysisBadge({ pillar, compact = false }: OctalysisBadgeProps) {
-  const meta = OCTALYSIS_META[pillar];
+export function PillarBadge({ pillar, compact = false }: PillarBadgeProps) {
+  const meta = PILLAR_META[pillar];
 
   return (
     <span
       className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold border-2 border-zinc-900 rounded-lg ${meta.bgClass} ${meta.textClass}`}
-      title={`${meta.coreDrive} — ${meta.description}`}
+      title={`${meta.tagline} — ${meta.description}`}
     >
       {ICONS[pillar]}
       <span>{compact ? meta.shortLabel : meta.label}</span>

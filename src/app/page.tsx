@@ -45,7 +45,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs font-semibold text-zinc-600">
           <p>
             <span className="font-hand text-base text-zinc-900">Loloverse</span>{" "}
-            · MVP EdTech (Contas de Teste + Gestão Escolar + RPG Octalysis + Salinha Híbrida)
+            · Plataforma Educacional (Contas de Teste + Gestão Escolar + Missões RPG + Espaço Híbrido)
           </p>
           <p className="text-[11px]">
             Sessão por aba (<code className="font-mono">sessionStorage</code>) + Sincronização ao vivo (<code className="font-mono">localStorage</code>)

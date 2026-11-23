@@ -18,7 +18,7 @@ function getSuggestedIntervention(student: Student): string {
     return "Agendar conversa acolhedora com responsáveis + plano de recuperação de presença com tutor de turma.";
   }
   if (gradeDrop >= 1.2) {
-    return "Convidar para plantão de dúvidas na Salinha Híbrida e parear com colega mentor (Octalysis Social).";
+    return "Convidar para plantão de dúvidas no Espaço Híbrido e parear com colega mentor da turma.";
   }
   return "Oferecer micro-missão de vitória rápida (+25 XP) para restaurar confiança e recuperar Saúde Acadêmica (HP).";
 }
@@ -50,7 +50,7 @@ export function AttentionRadar() {
           </div>
           <div>
             <h2 className="font-hand text-2xl sm:text-3xl leading-none text-zinc-900">
-              Radar de Atenção · Prevenção de Evasão (Core Drive 8)
+              Radar de Cuidado · Prevenção de Evasão
             </h2>
             <p className="text-xs sm:text-sm text-zinc-700 mt-1">
               Detecção automática de alunos com <strong>HP ≤ 55</strong>,{" "}
@@ -70,7 +70,7 @@ export function AttentionRadar() {
             Todos os estudantes estão com Saúde Acadêmica estável!
           </p>
           <p className="text-sm text-emerald-900">
-            Nenhum alerta crítico no Radar Core Drive 8 no momento.
+            Nenhum alerta crítico no Radar de Cuidado no momento.
           </p>
         </div>
       ) : (

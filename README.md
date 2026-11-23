@@ -1,30 +1,30 @@
-# Loloverse · Gestão Escolar, Gamificação Octalysis & Salinha Híbrida
+# Loloverse · Gestão Escolar, Missões RPG & Espaço Híbrido
 
-MVP funcional de uma plataforma EdTech completa que une gestão escolar (estilo Activesoft/KM Escolar), feedback comportamental em sala (estilo ClassDojo), RPG de tarefas e hábitos baseado no **Framework Octalysis** (estilo Habitica) e salas de interação híbrida (estilo Salinha/Discord), com identidade visual **Sketchbook Neobrutalism**.
+MVP funcional de uma plataforma educacional que une gestão escolar, feedback comportamental em sala, sistema de missões e evolução por competências e um **Espaço Híbrido** organizado em Categorias, Canais, Tópicos Guiados e Mesas de Estudo com identidade visual **Caderno Vivo (Sketchbook Neobrutalism)**.
 
-## Personas Reativas em Tempo Real
+## Contas de Teste & Autenticação
 
-Todas as ações feitas em uma persona sincronizam instantaneamente com as demais via React Context + persistência em `localStorage`:
+O sistema possui contas reais de teste (senha padrão `123`) com sessão isolada por aba (`sessionStorage`) e sincronização ao vivo entre abas (`localStorage`), além de cadastro de novas contas:
 
-- **Visão do Professor (Padrão):**
-  - **Painel ClassDojo:** Cards ilustrados dos alunos com modal rápido para conceder Pontos Positivos (`+XP`, `+Ouro`, atributos Octalysis) ou Alertas Comportamentais (`-HP`) com toasts animados.
-  - **Diário de Classe & Frequência (Activesoft):** Chamada rápida (`Presente`, `Atraso`, `Falta`), frequência acumulada e médias bimestrais.
-  - **Gerenciador de Quests (Habitica):** Criação e gestão de Missões Diárias, Tarefas de Casa e Boss Battles Coletivas vinculadas aos pilares Octalysis.
-- **Visão do Aluno (RPG & Salinha):**
-  - **Ficha do Personagem:** Avatar ilustrado, nível, barras de HP (Saúde Acadêmica) e XP, saldo de Ouro, insígnias e radar dos 4 atributos Octalysis (*Propósito, Maestria, Criatividade, Social*).
-  - **Quadro de Missões & Lojinha da Turma:** Conclusão interativa de quests e resgate de vantagens reais com Ouro.
-  - **Salinha Híbrida (Discord):** Canais de texto (`#mural-avisos`, `#duvidas-matematica`, `#projetos-maker`, `#off-topic`), colegas online com status de estudo, reações e chat persistente.
+- **Professores:** `prof.rafael` / `123` · `prof.camila` / `123`
+- **Coordenadora:** `coord.helena` / `123`
+- **Estudantes:** `sofia` / `123`, `pedro` / `123`, `lucas` / `123`, `beatriz` / `123` (primeiro nome em minúsculas + senha `123`)
+
+## Módulos Principais
+
+- **Visão do Professor:**
+  - **Pulso da Turma:** Cards ilustrados dos alunos com modal rápido para conceder Pontos Positivos (`+XP`, `+Ouro`, competências) ou Alertas Comportamentais (`-HP`).
+  - **Diário & Frequência:** Chamada rápida (`Presente`, `Atraso`, `Falta`), frequência acumulada e médias bimestrais.
+  - **Central de Missões:** Criação e gestão de Missões Diárias, Tarefas de Casa e Desafios Coletivos por competência (*Propósito, Maestria, Criatividade, Colaboração Social*).
+  - **Espaço Híbrido (Curadoria):** Criação de Categorias, Canais, Tópicos e edição de temas das Mesas de Estudo ao vivo.
+- **Visão do Aluno (Perfil RPG & Espaço Híbrido):**
+  - **Ficha do Personagem:** Avatar ilustrado, nível, barras de HP (Saúde Acadêmica) e XP, saldo de Ouro, insígnias e Bússola de Competências (*Propósito, Maestria, Criatividade, Social*).
+  - **Quadro de Missões & Lojinha da Turma:** Conclusão interativa de missões e resgate de vantagens reais com Ouro.
+  - **Espaço Híbrido:** Mesas de Estudo ao vivo, Categorias coloridas, Canais e Tópicos organizados sem poluição visual.
 - **Visão do Coordenador (Governança & Inteligência Escolar):**
-  - **Dashboard Executivo:** KPIs consolidados (Frequência Média, Engajamento Gamificado, Índice de Entregas e Economia de Ouro).
-  - **Radar de Atenção (Core Drive 8):** Detecção automática de alunos com risco de evasão/queda de rendimento e registro de intervenção pedagógica com restauração de HP.
-  - **Auditoria & Economia:** Visão consolidada por turma, aprovação/ajuste de preços da Lojinha Escolar e trilha de auditoria ao vivo.
-
-## Stack
-
-- **Next.js 14 (App Router)** + **TypeScript**
-- **Tailwind CSS** + **lucide-react**
-- Fontes `Patrick Hand` + `Plus Jakarta Sans` via `next/font/google`
-- Persistência client-side via React Context + `localStorage` (com botão **Resetar Dados da Demo**)
+  - **Dashboard Executivo:** KPIs consolidados em tempo real.
+  - **Radar de Cuidado:** Detecção automática de risco de evasão/queda de rendimento com registro de intervenção pedagógica (`+15 HP`).
+  - **Auditoria & Economia:** Consolidação por turma, governança da Lojinha Escolar, trilha de auditoria e curadoria do Espaço Híbrido.
 
 ## Como rodar localmente
 

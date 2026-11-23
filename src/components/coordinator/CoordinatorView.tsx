@@ -6,11 +6,11 @@ import { useLoloverse } from "@/context/LoloverseContext";
 import { ExecutiveKpis } from "@/components/coordinator/ExecutiveKpis";
 import { AttentionRadar } from "@/components/coordinator/AttentionRadar";
 import { EconomyAudit } from "@/components/coordinator/EconomyAudit";
-import { SalinhaHub } from "@/components/student/SalinhaHub";
+import { HybridSpaceHub } from "@/components/shared/HybridSpaceHub";
 
 export function CoordinatorView() {
   const { currentAccount } = useLoloverse();
-  const [tab, setTab] = useState<"radar" | "economy" | "salinha">("radar");
+  const [tab, setTab] = useState<"radar" | "economy" | "espaco">("radar");
 
   return (
     <div className="space-y-6">
@@ -25,7 +25,7 @@ export function CoordinatorView() {
             {currentAccount?.displayName || "Coord. Helena Prado"}
           </h1>
           <p className="text-xs sm:text-sm text-zinc-600 font-medium">
-            Monitoramento preventivo de evasão (Octalysis CD8), auditoria pedagógica e equilíbrio da economia de Ouro.
+            Monitoramento preventivo de evasão, auditoria pedagógica, economia de Ouro e curadoria do Espaço Híbrido.
           </p>
         </div>
 
@@ -40,7 +40,7 @@ export function CoordinatorView() {
             }`}
           >
             <ShieldAlert className="w-4 h-4" />
-            Radar (CD8)
+            Radar de Cuidado
           </button>
           <button
             type="button"
@@ -56,15 +56,15 @@ export function CoordinatorView() {
           </button>
           <button
             type="button"
-            onClick={() => setTab("salinha")}
+            onClick={() => setTab("espaco")}
             className={`sketch-btn px-4 py-2.5 text-sm ${
-              tab === "salinha"
+              tab === "espaco"
                 ? "bg-[#10B981] text-zinc-950"
                 : "bg-white text-zinc-700 hover:bg-emerald-50"
             }`}
           >
             <MessageSquare className="w-4 h-4" />
-            Salinha Híbrida
+            Espaço Híbrido
           </button>
         </div>
       </section>
@@ -75,7 +75,7 @@ export function CoordinatorView() {
       {/* Active Coordinator Section */}
       {tab === "radar" && <AttentionRadar />}
       {tab === "economy" && <EconomyAudit />}
-      {tab === "salinha" && <SalinhaHub />}
+      {tab === "espaco" && <HybridSpaceHub />}
     </div>
   );
 }

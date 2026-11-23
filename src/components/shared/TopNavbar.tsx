@@ -101,7 +101,7 @@ export function TopNavbar() {
                 </span>
                 <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-zinc-900 text-[#FACC15] rounded-md">
                   <Sparkles className="w-2.5 h-2.5" />
-                  Octalysis
+                  Escola Viva
                 </span>
               </div>
               <p className="text-[11px] font-medium text-zinc-600 leading-tight hidden sm:block">

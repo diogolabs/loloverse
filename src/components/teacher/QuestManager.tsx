@@ -12,9 +12,9 @@ import {
   Zap,
 } from "lucide-react";
 import { useLoloverse } from "@/context/LoloverseContext";
-import { OCTALYSIS_META } from "@/data/mockData";
-import { OctalysisPillar, QuestType } from "@/types";
-import { OctalysisBadge } from "@/components/shared/OctalysisBadge";
+import { PILLAR_META } from "@/data/mockData";
+import { EngagementPillar, QuestType } from "@/types";
+import { PillarBadge } from "@/components/shared/PillarBadge";
 
 export function QuestManager() {
   const { state, createQuest, toggleQuestActive } = useLoloverse();
@@ -22,7 +22,7 @@ export function QuestManager() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState<QuestType>("tarefa");
-  const [pillar, setPillar] = useState<OctalysisPillar>("criatividade");
+  const [pillar, setPillar] = useState<EngagementPillar>("criatividade");
   const [xpReward, setXpReward] = useState(50);
   const [goldReward, setGoldReward] = useState(25);
   const [dueDate, setDueDate] = useState("Sexta, 18h");
@@ -43,7 +43,7 @@ export function QuestManager() {
       title,
       description:
         description.trim() ||
-        "Conclua a missão dentro do prazo para ganhar XP, Ouro e fortalecer seu pilar Octalysis.",
+        "Conclua a missão dentro do prazo para ganhar XP, Ouro e fortalecer sua competência.",
       type,
       xpReward,
       goldReward,
@@ -89,10 +89,10 @@ export function QuestManager() {
           </div>
           <div>
             <h2 className="font-hand text-2xl leading-none text-zinc-900">
-              Criar Nova Quest (Habitica)
+              Criar Nova Missão
             </h2>
             <p className="text-xs text-zinc-600">
-              Conecte atividades reais aos pilares do Octalysis
+              Conecte atividades reais às competências da turma
             </p>
           </div>
         </div>
@@ -169,16 +169,16 @@ export function QuestManager() {
 
           <div>
             <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
-              Pilar Octalysis Estimulado
+              Competência Estimulada
             </label>
             <select
               value={pillar}
-              onChange={(e) => setPillar(e.target.value as OctalysisPillar)}
+              onChange={(e) => setPillar(e.target.value as EngagementPillar)}
               className="sketch-input font-semibold"
             >
-              {(Object.keys(OCTALYSIS_META) as OctalysisPillar[]).map((p) => (
+              {(Object.keys(PILLAR_META) as EngagementPillar[]).map((p) => (
                 <option key={p} value={p}>
-                  {OCTALYSIS_META[p].label} ({OCTALYSIS_META[p].coreDrive})
+                  {PILLAR_META[p].label} ({PILLAR_META[p].tagline})
                 </option>
               ))}
             </select>
@@ -290,7 +290,7 @@ export function QuestManager() {
                     {badge.icon}
                     {badge.label}
                   </span>
-                  <OctalysisBadge pillar={quest.pillar} />
+                  <PillarBadge pillar={quest.pillar} />
                   {!quest.active && (
                     <span className="px-2 py-0.5 text-[11px] font-bold bg-zinc-200 border border-zinc-900 rounded-md">
                       Pausada

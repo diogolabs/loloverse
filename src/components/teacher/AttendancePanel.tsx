@@ -101,7 +101,7 @@ export function AttendancePanel() {
         </div>
       </div>
 
-      {/* Activesoft-style Attendance & Grades Table */}
+      {/* Attendance & Grades Table */}
       <div className="sketch-card overflow-hidden">
         <div className="px-4 sm:px-5 py-3.5 bg-[#FAF8F5] border-b-2 border-zinc-900 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">

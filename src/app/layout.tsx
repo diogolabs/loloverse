@@ -18,9 +18,9 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Loloverse · Gestão Escolar, Gamificação Octalysis & Salinha Híbrida",
+  title: "Loloverse · Gestão Escolar, Missões RPG & Espaço Híbrido",
   description:
-    "Plataforma EdTech que une diário escolar inteligente, feedback comportamental em sala, RPG de missões (Octalysis) e salinha híbrida colaborativa.",
+    "Plataforma educacional que une diário escolar inteligente, feedback comportamental em sala, missões gamificadas e espaço híbrido organizado em categorias, canais, tópicos e mesas de estudo.",
 };
 
 export default function RootLayout({

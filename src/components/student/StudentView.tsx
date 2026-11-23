@@ -5,11 +5,11 @@ import { MessageSquare, Swords } from "lucide-react";
 import { useLoloverse } from "@/context/LoloverseContext";
 import { CharacterSheet } from "@/components/student/CharacterSheet";
 import { QuestsAndShop } from "@/components/student/QuestsAndShop";
-import { SalinhaHub } from "@/components/student/SalinhaHub";
+import { HybridSpaceHub } from "@/components/shared/HybridSpaceHub";
 
 export function StudentView() {
   const { state, currentAccount } = useLoloverse();
-  const [workspaceTab, setWorkspaceTab] = useState<"missions" | "salinha">(
+  const [workspaceTab, setWorkspaceTab] = useState<"missions" | "espaco">(
     "missions"
   );
 
@@ -21,7 +21,7 @@ export function StudentView() {
 
   return (
     <div className="space-y-5">
-      {/* Main 12-Col Responsive RPG + Salinha Layout */}
+      {/* Main 12-Col Responsive RPG + Espaço Híbrido Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Character Sheet */}
         <div className="lg:col-span-4">
@@ -31,7 +31,7 @@ export function StudentView() {
           />
         </div>
 
-        {/* Right: Quests/Shop OR Salinha Híbrida */}
+        {/* Right: Quests/Shop OR Espaço Híbrido */}
         <div className="lg:col-span-8 space-y-4">
           <div className="flex flex-wrap items-center gap-2.5">
             <button
@@ -48,17 +48,17 @@ export function StudentView() {
             </button>
             <button
               type="button"
-              onClick={() => setWorkspaceTab("salinha")}
+              onClick={() => setWorkspaceTab("espaco")}
               className={`sketch-btn px-4 py-2.5 text-sm ${
-                workspaceTab === "salinha"
+                workspaceTab === "espaco"
                   ? "bg-[#8B5CF6] text-white"
                   : "bg-white text-zinc-700 hover:bg-violet-50"
               }`}
             >
               <MessageSquare className="w-4 h-4" />
-              Salinha Híbrida (Discord)
+              Espaço Híbrido
               <span className="px-1.5 py-0.5 text-[10px] font-extrabold bg-[#FACC15] text-zinc-950 border border-zinc-900 rounded-md">
-                {state.channels.length} canais
+                {state.topics.length} tópicos
               </span>
             </button>
           </div>
@@ -66,7 +66,7 @@ export function StudentView() {
           {workspaceTab === "missions" ? (
             <QuestsAndShop student={student} />
           ) : (
-            <SalinhaHub classId={student.classId} />
+            <HybridSpaceHub classId={student.classId} />
           )}
         </div>
       </div>

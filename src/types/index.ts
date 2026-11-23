@@ -2,7 +2,7 @@ export type Persona = "teacher" | "student" | "coordinator";
 
 export type AttendanceStatus = "presente" | "falta" | "atraso";
 
-export type OctalysisPillar = "proposito" | "maestria" | "criatividade" | "social";
+export type EngagementPillar = "proposito" | "maestria" | "criatividade" | "social";
 
 export type QuestType = "diaria" | "tarefa" | "boss";
 
@@ -25,10 +25,39 @@ export interface StudyRoom {
   name: string;
   topic: string;
   maxSeats: number;
-  participantIds: string[]; // account IDs currently inside the room
+  accentColor: string;
+  participantIds: string[];
 }
 
-export interface OctalysisStats {
+export interface ChannelCategory {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface ChatChannel {
+  id: string;
+  categoryId: string;
+  slug: string;
+  label: string;
+  title: string;
+  description: string;
+  staffOnlyTopics?: boolean;
+}
+
+export interface ChannelTopic {
+  id: string;
+  channelId: string;
+  title: string;
+  summary: string;
+  createdBy: string;
+  createdAt: string;
+  pinned?: boolean;
+  resolved?: boolean;
+  pillar?: EngagementPillar;
+}
+
+export interface PillarStats {
   proposito: number;
   maestria: number;
   criatividade: number;
@@ -56,7 +85,7 @@ export interface Student {
   streakDays: number;
   onlineStatus: "online" | "estudando" | "em-grupo" | "offline";
   studyActivity?: string;
-  octalysis: OctalysisStats;
+  pillars: PillarStats;
   badges: string[];
   interventionsCount: number;
   lastInterventionNote?: string;
@@ -79,7 +108,7 @@ export interface BehaviorPreset {
   xpDelta: number;
   goldDelta: number;
   hpDelta: number;
-  pillar: OctalysisPillar;
+  pillar: EngagementPillar;
   iconName: string;
 }
 
@@ -91,7 +120,7 @@ export interface Quest {
   type: QuestType;
   xpReward: number;
   goldReward: number;
-  pillar: OctalysisPillar;
+  pillar: EngagementPillar;
   dueDate: string;
   active: boolean;
   completedBy: string[];
@@ -122,13 +151,6 @@ export interface RedemptionRecord {
   status: "entregue" | "pendente";
 }
 
-export interface ChatChannel {
-  id: string;
-  slug: string;
-  label: string;
-  description: string;
-}
-
 export interface ChatReaction {
   emoji: string;
   count: number;
@@ -138,6 +160,7 @@ export interface ChatReaction {
 export interface ChatMessage {
   id: string;
   channelId: string;
+  topicId: string;
   authorId: string;
   authorName: string;
   authorRole: "professor" | "aluno" | "coordenador";
@@ -162,7 +185,8 @@ export interface ActivityLog {
     | "loja"
     | "intervencao"
     | "governanca"
-    | "conta";
+    | "conta"
+    | "espaco";
   deltaSummary?: string;
 }
 
@@ -176,12 +200,14 @@ export interface ToastItem {
 export interface LoloverseState {
   accounts: Account[];
   studyRooms: StudyRoom[];
+  categories: ChannelCategory[];
+  channels: ChatChannel[];
+  topics: ChannelTopic[];
   classes: ClassRoom[];
   students: Student[];
   quests: Quest[];
   rewards: ShopReward[];
   redemptions: RedemptionRecord[];
-  channels: ChatChannel[];
   messages: ChatMessage[];
   logs: ActivityLog[];
   selectedClassId: string;

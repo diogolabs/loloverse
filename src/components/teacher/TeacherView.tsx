@@ -11,15 +11,15 @@ import {
 } from "lucide-react";
 import { useLoloverse } from "@/context/LoloverseContext";
 import { AttendancePanel } from "@/components/teacher/AttendancePanel";
-import { ClassDojoGrid } from "@/components/teacher/ClassDojoGrid";
+import { ClassroomPulseGrid } from "@/components/teacher/ClassroomPulseGrid";
 import { QuestManager } from "@/components/teacher/QuestManager";
-import { SalinhaHub } from "@/components/student/SalinhaHub";
+import { HybridSpaceHub } from "@/components/shared/HybridSpaceHub";
 
-type TeacherTab = "dojo" | "attendance" | "quests" | "salinha";
+type TeacherTab = "pulse" | "attendance" | "quests" | "espaco";
 
 export function TeacherView() {
   const { state, currentAccount, setSelectedClassId } = useLoloverse();
-  const [tab, setTab] = useState<TeacherTab>("dojo");
+  const [tab, setTab] = useState<TeacherTab>("pulse");
 
   const selectedClass =
     state.classes.find((c) => c.id === state.selectedClassId) || state.classes[0];
@@ -84,15 +84,15 @@ export function TeacherView() {
       <div className="flex flex-wrap items-center gap-2.5">
         <button
           type="button"
-          onClick={() => setTab("dojo")}
+          onClick={() => setTab("pulse")}
           className={`sketch-btn px-4 py-2.5 text-sm ${
-            tab === "dojo"
+            tab === "pulse"
               ? "bg-[#FACC15] text-zinc-950"
               : "bg-white text-zinc-700 hover:bg-amber-50"
           }`}
         >
           <Sparkles className="w-4 h-4" />
-          Painel ClassDojo
+          Pulso da Turma
         </button>
 
         <button
@@ -105,7 +105,7 @@ export function TeacherView() {
           }`}
         >
           <ClipboardCheck className="w-4 h-4" />
-          Frequência & Notas (Activesoft)
+          Diário & Frequência
         </button>
 
         <button
@@ -118,29 +118,29 @@ export function TeacherView() {
           }`}
         >
           <Swords className="w-4 h-4" />
-          Gerenciador de Quests (Habitica)
+          Central de Missões
         </button>
 
         <button
           type="button"
-          onClick={() => setTab("salinha")}
+          onClick={() => setTab("espaco")}
           className={`sketch-btn px-4 py-2.5 text-sm ${
-            tab === "salinha"
+            tab === "espaco"
               ? "bg-[#10B981] text-zinc-950"
               : "bg-white text-zinc-700 hover:bg-emerald-50"
           }`}
         >
           <MessageSquare className="w-4 h-4" />
-          Salinha Híbrida (Moderação)
+          Espaço Híbrido (Curadoria)
         </button>
       </div>
 
       {/* Active Teacher Workspace */}
       <div>
-        {tab === "dojo" && <ClassDojoGrid />}
+        {tab === "pulse" && <ClassroomPulseGrid />}
         {tab === "attendance" && <AttendancePanel />}
         {tab === "quests" && <QuestManager />}
-        {tab === "salinha" && <SalinhaHub classId={selectedClass.id} />}
+        {tab === "espaco" && <HybridSpaceHub classId={selectedClass.id} />}
       </div>
     </div>
   );

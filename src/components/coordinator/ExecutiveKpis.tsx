@@ -22,14 +22,14 @@ export function ExecutiveKpis() {
     state.students.reduce((acc, s) => acc + s.deliveryRate, 0) / totalStudents
   );
 
-  const avgOctalysis = Math.round(
+  const avgEngagement = Math.round(
     state.students.reduce(
       (acc, s) =>
         acc +
-        (s.octalysis.proposito +
-          s.octalysis.maestria +
-          s.octalysis.criatividade +
-          s.octalysis.social) /
+        (s.pillars.proposito +
+          s.pillars.maestria +
+          s.pillars.criatividade +
+          s.pillars.social) /
           4,
       0
     ) / totalStudents
@@ -54,9 +54,9 @@ export function ExecutiveKpis() {
       icon: <Users className="w-5 h-5" />,
     },
     {
-      label: "Engajamento Gamificado",
-      value: `${avgOctalysis}/100`,
-      sub: "Média dos 4 pilares Octalysis",
+      label: "Índice de Engajamento",
+      value: `${avgEngagement}/100`,
+      sub: "Média das 4 competências da escola",
       bg: "bg-violet-100",
       iconBg: "bg-[#8B5CF6] text-white",
       icon: <Sparkles className="w-5 h-5" />,

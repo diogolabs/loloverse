@@ -15,18 +15,20 @@ import {
   ActivityLog,
   AttendanceStatus,
   BehaviorPreset,
+  ChannelTopic,
   LoloverseState,
-  OctalysisPillar,
+  EngagementPillar,
   Persona,
   Quest,
   QuestType,
   ShopReward,
   Student,
+  StudyRoom,
   ToastItem,
 } from "@/types";
 
-const STORAGE_KEY = "loloverse_mvp_state_v2";
-const SESSION_KEY = "loloverse_session_account_id_v2";
+const STORAGE_KEY = "loloverse_mvp_state_v4";
+const SESSION_KEY = "loloverse_session_account_id_v4";
 
 const AVATAR_PALETTE = [
   "#FACC15",
@@ -68,23 +70,53 @@ interface LoloverseContextValue {
     type: QuestType;
     xpReward: number;
     goldReward: number;
-    pillar: OctalysisPillar;
+    pillar: EngagementPillar;
     dueDate: string;
     bossTargetPercent?: number;
   }) => void;
   toggleQuestActive: (questId: string) => void;
   completeQuestAsStudent: (questId: string, studentId: string) => void;
   redeemReward: (rewardId: string, studentId: string) => void;
-  sendChatMessage: (channelId: string, content: string) => void;
+  // Espaço Híbrido (Categorias, Canais, Tópicos, Mensagens & Mesas)
+  createCategory: (name: string, color: string) => void;
+  createChannel: (
+    categoryId: string,
+    title: string,
+    description: string,
+    staffOnlyTopics?: boolean
+  ) => string | null;
+  updateChannel: (channelId: string, title: string, description: string) => void;
+  createTopic: (
+    channelId: string,
+    title: string,
+    summary: string,
+    pillar?: EngagementPillar
+  ) => string | null;
+  updateTopic: (
+    topicId: string,
+    updates: Partial<Pick<ChannelTopic, "title" | "summary" | "pinned" | "resolved">>
+  ) => void;
+  sendChatMessage: (channelId: string, topicId: string, content: string) => void;
   toggleReaction: (messageId: string, emoji: string) => void;
   togglePinMessage: (messageId: string) => void;
-  createChannel: (label: string, description: string) => void;
+  createStudyRoom: (input: {
+    name: string;
+    topic: string;
+    maxSeats: number;
+    accentColor: string;
+  }) => void;
+  updateStudyRoom: (
+    roomId: string,
+    updates: Partial<Pick<StudyRoom, "name" | "topic" | "maxSeats" | "accentColor">>
+  ) => void;
+  deleteStudyRoom: (roomId: string) => void;
   joinStudyRoom: (roomId: string) => void;
   leaveStudyRoom: () => void;
   updateMyStudyStatus: (
     onlineStatus: Student["onlineStatus"],
     studyActivity: string
   ) => void;
+  // Coordenação
   toggleRewardApproval: (rewardId: string) => void;
   updateRewardCost: (rewardId: string, newCost: number) => void;
   createReward: (input: {
@@ -116,6 +148,16 @@ function nowLabel(): string {
 
 function uid(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function toSlug(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 export function LoloverseProvider({ children }: { children: React.ReactNode }) {
@@ -169,7 +211,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
           parsed &&
           Array.isArray(parsed.students) &&
           Array.isArray(parsed.accounts) &&
-          Array.isArray(parsed.studyRooms)
+          Array.isArray(parsed.categories) &&
+          Array.isArray(parsed.topics)
         ) {
           setState({
             ...INITIAL_STATE,
@@ -198,7 +241,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state, hydrated]);
 
-  // Real-time cross-tab synchronization (e.g., Teacher tab + Student tab side by side!)
+  // Real-time cross-tab synchronization
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== STORAGE_KEY || !event.newValue) return;
@@ -207,7 +250,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         if (
           parsed &&
           Array.isArray(parsed.students) &&
-          Array.isArray(parsed.accounts)
+          Array.isArray(parsed.accounts) &&
+          Array.isArray(parsed.topics)
         ) {
           setState({
             ...INITIAL_STATE,
@@ -373,7 +417,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
               streakDays: 1,
               onlineStatus: "online",
               studyActivity: "Explorando o Loloverse!",
-              octalysis: {
+              pillars: {
                 proposito: 60,
                 maestria: 60,
                 criatividade: 65,
@@ -434,7 +478,11 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       }));
     }
     persistSession(null);
-    pushToast("Sessão encerrada", "Escolha ou crie outra conta para testar.", "info");
+    pushToast(
+      "Sessão encerrada",
+      "Escolha ou crie outra conta para testar.",
+      "info"
+    );
   }, [persistSession, pushToast]);
 
   const setSelectedClassId = useCallback((classId: string) => {
@@ -558,11 +606,11 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
           const nextGold = Math.max(0, s.gold + preset.goldDelta);
 
           const pillarBoost = preset.type === "positive" ? 3 : -2;
-          const nextOctalysis = {
-            ...s.octalysis,
+          const nextPillars = {
+            ...s.pillars,
             [preset.pillar]: Math.max(
               10,
-              Math.min(100, s.octalysis[preset.pillar] + pillarBoost)
+              Math.min(100, s.pillars[preset.pillar] + pillarBoost)
             ),
           };
 
@@ -573,7 +621,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
             xpToNext: nextXpToNext,
             hp: nextHp,
             gold: nextGold,
-            octalysis: nextOctalysis,
+            pillars: nextPillars,
           };
         });
 
@@ -645,7 +693,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       type: QuestType;
       xpReward: number;
       goldReward: number;
-      pillar: OctalysisPillar;
+      pillar: EngagementPillar;
       dueDate: string;
       bossTargetPercent?: number;
     }) => {
@@ -770,11 +818,11 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
             hp: Math.min(s.maxHp, s.hp + 4),
             deliveryRate: Math.min(100, s.deliveryRate + 2),
             streakDays: s.streakDays + 1,
-            octalysis: {
-              ...s.octalysis,
+            pillars: {
+              ...s.pillars,
               [currentQuest.pillar]: Math.min(
                 100,
-                s.octalysis[currentQuest.pillar] + 4
+                s.pillars[currentQuest.pillar] + 4
               ),
             },
           };
@@ -901,37 +949,251 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     [pushToast]
   );
 
-  const sendChatMessage = useCallback((channelId: string, content: string) => {
-    const trimmed = content.trim();
-    const acc = currentAccountRef.current;
-    if (!trimmed || !acc) return;
+  // --- ESPAÇO HÍBRIDO (Categorias, Canais, Tópicos, Mensagens & Mesas) ---
 
-    const authorRole: "professor" | "aluno" | "coordenador" =
-      acc.role === "teacher"
-        ? "professor"
-        : acc.role === "coordinator"
-        ? "coordenador"
-        : "aluno";
+  const createCategory = useCallback(
+    (name: string, color: string) => {
+      const cleanName = name.trim();
+      if (!cleanName) return;
+      const actorName = currentAccountRef.current?.displayName || "Docente";
 
-    setState((prev) => ({
-      ...prev,
-      messages: [
-        ...prev.messages,
-        {
-          id: uid("msg"),
-          channelId,
-          authorId: acc.id,
-          authorName: acc.displayName,
-          authorRole,
-          avatarSeed: acc.avatarSeed,
-          avatarColor: acc.avatarColor,
-          content: trimmed,
-          timestamp: nowLabel(),
-          reactions: [],
-        },
-      ],
-    }));
-  }, []);
+      const newCat = {
+        id: uid("cat"),
+        name: cleanName,
+        color: color || "#3B82F6",
+      };
+
+      const newLog: ActivityLog = {
+        id: uid("log"),
+        timestamp: nowLabel(),
+        actor: actorName,
+        target: cleanName,
+        action: "Criou categoria no Espaço Híbrido",
+        category: "espaco",
+        deltaSummary: "Nova Categoria",
+      };
+
+      setState((prev) => ({
+        ...prev,
+        categories: [...prev.categories, newCat],
+        logs: [newLog, ...prev.logs].slice(0, 40),
+      }));
+
+      pushToast(
+        `Categoria "${cleanName}" criada!`,
+        "Agora você pode adicionar canais organizados dentro dela.",
+        "success"
+      );
+    },
+    [pushToast]
+  );
+
+  const createChannel = useCallback(
+    (
+      categoryId: string,
+      title: string,
+      description: string,
+      staffOnlyTopics = false
+    ): string | null => {
+      const cleanTitle = title.trim();
+      const slug = toSlug(cleanTitle);
+      if (!cleanTitle || !slug) return null;
+
+      const actorName = currentAccountRef.current?.displayName || "Docente";
+      const channelId = uid("ch");
+      const welcomeTopicId = uid("top");
+
+      const newChannel = {
+        id: channelId,
+        categoryId,
+        slug: `#${slug}`,
+        label: slug,
+        title: cleanTitle,
+        description:
+          description.trim() ||
+          "Canal organizado em tópicos para discussões e aprendizados da turma.",
+        staffOnlyTopics,
+      };
+
+      const starterTopic: ChannelTopic = {
+        id: welcomeTopicId,
+        channelId,
+        title: `Boas-vindas: ${cleanTitle}`,
+        summary:
+          description.trim() ||
+          "Primeiro tópico aberto para organizar ideias e dúvidas deste canal.",
+        createdBy: actorName,
+        createdAt: nowLabel(),
+        pinned: true,
+        pillar: "social",
+      };
+
+      const newLog: ActivityLog = {
+        id: uid("log"),
+        timestamp: nowLabel(),
+        actor: actorName,
+        target: cleanTitle,
+        action: "Criou canal no Espaço Híbrido",
+        category: "espaco",
+        deltaSummary: `#${slug}`,
+      };
+
+      setState((prev) => ({
+        ...prev,
+        channels: [...prev.channels, newChannel],
+        topics: [starterTopic, ...prev.topics],
+        logs: [newLog, ...prev.logs].slice(0, 40),
+      }));
+
+      pushToast(
+        `Canal "${cleanTitle}" criado!`,
+        "Já disponível com o primeiro tópico de boas-vindas.",
+        "success"
+      );
+      return channelId;
+    },
+    [pushToast]
+  );
+
+  const updateChannel = useCallback(
+    (channelId: string, title: string, description: string) => {
+      const cleanTitle = title.trim();
+      if (!cleanTitle) return;
+      const slug = toSlug(cleanTitle);
+
+      setState((prev) => ({
+        ...prev,
+        channels: prev.channels.map((ch) =>
+          ch.id === channelId
+            ? {
+                ...ch,
+                title: cleanTitle,
+                label: slug || ch.label,
+                slug: slug ? `#${slug}` : ch.slug,
+                description: description.trim() || ch.description,
+              }
+            : ch
+        ),
+      }));
+
+      pushToast("Canal atualizado!", cleanTitle, "info");
+    },
+    [pushToast]
+  );
+
+  const createTopic = useCallback(
+    (
+      channelId: string,
+      title: string,
+      summary: string,
+      pillar?: EngagementPillar
+    ): string | null => {
+      const cleanTitle = title.trim();
+      const acc = currentAccountRef.current;
+      if (!cleanTitle || !acc) return null;
+
+      const topicId = uid("top");
+      const newTopic: ChannelTopic = {
+        id: topicId,
+        channelId,
+        title: cleanTitle,
+        summary:
+          summary.trim() ||
+          "Discussão guiada aberta para troca de ideias e resolução colaborativa.",
+        createdBy: acc.displayName,
+        createdAt: nowLabel(),
+        pillar,
+      };
+
+      const newLog: ActivityLog = {
+        id: uid("log"),
+        timestamp: nowLabel(),
+        actor: acc.displayName,
+        target: cleanTitle,
+        action: "Abriu novo tópico no Espaço Híbrido",
+        category: "espaco",
+        deltaSummary: "Novo Tópico",
+      };
+
+      setState((prev) => ({
+        ...prev,
+        topics: [newTopic, ...prev.topics],
+        logs: [newLog, ...prev.logs].slice(0, 40),
+      }));
+
+      pushToast("Novo tópico aberto!", cleanTitle, "success");
+      return topicId;
+    },
+    [pushToast]
+  );
+
+  const updateTopic = useCallback(
+    (
+      topicId: string,
+      updates: Partial<
+        Pick<ChannelTopic, "title" | "summary" | "pinned" | "resolved">
+      >
+    ) => {
+      setState((prev) => ({
+        ...prev,
+        topics: prev.topics.map((t) =>
+          t.id === topicId ? { ...t, ...updates } : t
+        ),
+      }));
+      if (updates.resolved !== undefined) {
+        pushToast(
+          updates.resolved ? "Tópico marcado como resolvido!" : "Tópico reaberto",
+          undefined,
+          updates.resolved ? "success" : "info"
+        );
+      } else if (updates.pinned !== undefined) {
+        pushToast(
+          updates.pinned ? "Tópico fixado no topo" : "Tópico desafixado",
+          undefined,
+          "info"
+        );
+      } else {
+        pushToast("Tópico atualizado", updates.title, "info");
+      }
+    },
+    [pushToast]
+  );
+
+  const sendChatMessage = useCallback(
+    (channelId: string, topicId: string, content: string) => {
+      const trimmed = content.trim();
+      const acc = currentAccountRef.current;
+      if (!trimmed || !acc) return;
+
+      const authorRole: "professor" | "aluno" | "coordenador" =
+        acc.role === "teacher"
+          ? "professor"
+          : acc.role === "coordinator"
+          ? "coordenador"
+          : "aluno";
+
+      setState((prev) => ({
+        ...prev,
+        messages: [
+          ...prev.messages,
+          {
+            id: uid("msg"),
+            channelId,
+            topicId,
+            authorId: acc.id,
+            authorName: acc.displayName,
+            authorRole,
+            avatarSeed: acc.avatarSeed,
+            avatarColor: acc.avatarColor,
+            content: trimmed,
+            timestamp: nowLabel(),
+            reactions: [],
+          },
+        ],
+      }));
+    },
+    []
+  );
 
   const toggleReaction = useCallback((messageId: string, emoji: string) => {
     setState((prev) => ({
@@ -971,37 +1233,122 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
           m.id === messageId ? { ...m, pinned: !m.pinned } : m
         ),
       }));
-      pushToast("Mural atualizado", "Status de fixação da mensagem alterado.", "info");
+      pushToast(
+        "Destaque atualizado",
+        "Status de fixação da mensagem alterado.",
+        "info"
+      );
     },
     [pushToast]
   );
 
-  const createChannel = useCallback(
-    (label: string, description: string) => {
-      const clean = label
-        .trim()
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9-]+/g, "-")
-        .replace(/^-|-$/g, "");
-      if (!clean) return;
-      const newChannel = {
-        id: uid("ch"),
-        slug: `#${clean}`,
-        label: clean,
-        description:
-          description.trim() || "Canal colaborativo da Salinha Híbrida.",
+  const createStudyRoom = useCallback(
+    (input: {
+      name: string;
+      topic: string;
+      maxSeats: number;
+      accentColor: string;
+    }) => {
+      const cleanName = input.name.trim();
+      if (!cleanName) return;
+      const actorName = currentAccountRef.current?.displayName || "Docente";
+
+      const newRoom: StudyRoom = {
+        id: uid("room"),
+        name: cleanName,
+        topic: input.topic.trim() || "Estudo colaborativo guiado",
+        maxSeats: Math.max(2, Math.min(20, input.maxSeats || 6)),
+        accentColor: input.accentColor || "#FACC15",
+        participantIds: [],
       };
+
+      const newLog: ActivityLog = {
+        id: uid("log"),
+        timestamp: nowLabel(),
+        actor: actorName,
+        target: cleanName,
+        action: "Criou nova Mesa de Estudo no Espaço Híbrido",
+        category: "espaco",
+        deltaSummary: `${newRoom.maxSeats} vagas`,
+      };
+
       setState((prev) => ({
         ...prev,
-        channels: [...prev.channels, newChannel],
+        studyRooms: [...prev.studyRooms, newRoom],
+        logs: [newLog, ...prev.logs].slice(0, 40),
       }));
+
       pushToast(
-        `Canal #${clean} criado!`,
-        "Todos os participantes da Salinha já podem conversar nele.",
+        `Mesa "${cleanName}" criada!`,
+        `Tema: ${newRoom.topic}`,
         "success"
       );
+    },
+    [pushToast]
+  );
+
+  const updateStudyRoom = useCallback(
+    (
+      roomId: string,
+      updates: Partial<
+        Pick<StudyRoom, "name" | "topic" | "maxSeats" | "accentColor">
+      >
+    ) => {
+      const target = stateRef.current.studyRooms.find((r) => r.id === roomId);
+      if (!target) return;
+      const actorName = currentAccountRef.current?.displayName || "Docente";
+
+      const nextName = updates.name?.trim() || target.name;
+      const nextTopic = updates.topic?.trim() || target.topic;
+
+      const newLog: ActivityLog = {
+        id: uid("log"),
+        timestamp: nowLabel(),
+        actor: actorName,
+        target: nextName,
+        action: `Atualizou tema da Mesa de Estudo para "${nextTopic}"`,
+        category: "espaco",
+        deltaSummary: "Tema atualizado",
+      };
+
+      setState((prev) => ({
+        ...prev,
+        studyRooms: prev.studyRooms.map((r) =>
+          r.id === roomId
+            ? {
+                ...r,
+                name: nextName,
+                topic: nextTopic,
+                maxSeats: updates.maxSeats
+                  ? Math.max(2, Math.min(20, updates.maxSeats))
+                  : r.maxSeats,
+                accentColor: updates.accentColor || r.accentColor,
+              }
+            : r
+        ),
+        logs: [newLog, ...prev.logs].slice(0, 40),
+      }));
+
+      pushToast(
+        `Mesa "${nextName}" atualizada!`,
+        `Novo tema: ${nextTopic}`,
+        "success"
+      );
+    },
+    [pushToast]
+  );
+
+  const deleteStudyRoom = useCallback(
+    (roomId: string) => {
+      const target = stateRef.current.studyRooms.find((r) => r.id === roomId);
+      if (!target) return;
+
+      setState((prev) => ({
+        ...prev,
+        studyRooms: prev.studyRooms.filter((r) => r.id !== roomId),
+      }));
+
+      pushToast("Mesa encerrada", `"${target.name}" foi removida.`, "warning");
     },
     [pushToast]
   );
@@ -1028,7 +1375,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
                 ? {
                     ...s,
                     onlineStatus: "em-grupo",
-                    studyActivity: `Na sala: ${room.name}`,
+                    studyActivity: `Na mesa: ${room.name}`,
                   }
                 : s
             )
@@ -1037,7 +1384,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
 
       pushToast(
         `Você entrou em "${room.name}"`,
-        "Seu status na Salinha foi atualizado para Em Grupo.",
+        "Seu status no Espaço Híbrido foi atualizado para Em Grupo.",
         "success"
       );
     },
@@ -1060,14 +1407,18 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
               ? {
                   ...s,
                   onlineStatus: "online",
-                  studyActivity: "Disponível na Salinha",
+                  studyActivity: "Disponível no Espaço Híbrido",
                 }
               : s
           )
         : prev.students,
     }));
 
-    pushToast("Saiu da mesa de estudo", "Você voltou para o lobby da Salinha.", "info");
+    pushToast(
+      "Saiu da mesa de estudo",
+      "Você voltou para o mural do Espaço Híbrido.",
+      "info"
+    );
   }, [pushToast]);
 
   const updateMyStudyStatus = useCallback(
@@ -1088,7 +1439,11 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         ),
       }));
 
-      pushToast("Status de estudo atualizado!", studyActivity.trim() || undefined, "info");
+      pushToast(
+        "Status de estudo atualizado!",
+        studyActivity.trim() || undefined,
+        "info"
+      );
     },
     [pushToast]
   );
@@ -1270,7 +1625,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     setState(INITIAL_STATE);
     pushToast(
       "Dados da demo resetados!",
-      "Contas, pontos, presenças, missões e Salinha voltaram ao estado inicial.",
+      "Contas, pontos, presenças, missões e Espaço Híbrido voltaram ao estado inicial.",
       "info"
     );
   }, [pushToast]);
@@ -1291,10 +1646,17 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         toggleQuestActive,
         completeQuestAsStudent,
         redeemReward,
+        createCategory,
+        createChannel,
+        updateChannel,
+        createTopic,
+        updateTopic,
         sendChatMessage,
         toggleReaction,
         togglePinMessage,
-        createChannel,
+        createStudyRoom,
+        updateStudyRoom,
+        deleteStudyRoom,
         joinStudyRoom,
         leaveStudyRoom,
         updateMyStudyStatus,

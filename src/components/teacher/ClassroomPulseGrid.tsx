@@ -20,7 +20,7 @@ import { useLoloverse } from "@/context/LoloverseContext";
 import { BEHAVIOR_PRESETS } from "@/data/mockData";
 import { BehaviorPreset, Student } from "@/types";
 import { SketchAvatar } from "@/components/shared/SketchAvatar";
-import { OctalysisBadge } from "@/components/shared/OctalysisBadge";
+import { PillarBadge } from "@/components/shared/PillarBadge";
 
 function PresetIcon({ name }: { name: string }) {
   const cls = "w-5 h-5 shrink-0";
@@ -46,9 +46,11 @@ function PresetIcon({ name }: { name: string }) {
   }
 }
 
-export function ClassDojoGrid() {
+export function ClassroomPulseGrid() {
   const { state, applyBehaviorFeedback } = useLoloverse();
-  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(
+    null
+  );
   const [activeTab, setActiveTab] = useState<"positive" | "alert">("positive");
 
   const classStudents = state.students.filter(
@@ -74,7 +76,7 @@ export function ClassDojoGrid() {
       <div className="sketch-card p-4 bg-[#FFFBEB] flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-hand text-2xl text-zinc-900 leading-tight">
-            Painel ClassDojo · Feedback Comportamental Instantâneo
+            Pulso da Turma · Feedback Comportamental Instantâneo
           </h2>
           <p className="text-xs sm:text-sm text-zinc-700">
             Clique em qualquer estudante para conceder <strong>XP / Ouro</strong> ou registrar um{" "}
@@ -292,7 +294,7 @@ export function ClassDojoGrid() {
                         >
                           <PresetIcon name={preset.iconName} />
                         </div>
-                        <OctalysisBadge pillar={preset.pillar} compact />
+                        <PillarBadge pillar={preset.pillar} compact />
                       </div>
 
                       <h4 className="font-hand text-xl text-zinc-900 mt-2.5 leading-tight">

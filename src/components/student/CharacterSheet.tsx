@@ -9,8 +9,8 @@ import {
   Sparkles,
   Zap,
 } from "lucide-react";
-import { OCTALYSIS_META } from "@/data/mockData";
-import { OctalysisPillar, Student } from "@/types";
+import { PILLAR_META } from "@/data/mockData";
+import { EngagementPillar, Student } from "@/types";
 import { SketchAvatar } from "@/components/shared/SketchAvatar";
 
 interface CharacterSheetProps {
@@ -18,7 +18,7 @@ interface CharacterSheetProps {
   classNameTitle: string;
 }
 
-function OctalysisRadar({ stats }: { stats: Student["octalysis"] }) {
+function CompetencyRadar({ stats }: { stats: Student["pillars"] }) {
   // 4-axis diamond radar chart (Proposito top, Maestria right, Criatividade bottom, Social left)
   const cx = 100;
   const cy = 100;
@@ -43,7 +43,7 @@ function OctalysisRadar({ stats }: { stats: Student["octalysis"] }) {
       <svg
         viewBox="0 0 200 200"
         className="w-48 h-48 overflow-visible"
-        aria-label="Radar Octalysis do Estudante"
+        aria-label="Bússola de Competências do Estudante"
       >
         {/* Concentric diamond rings */}
         {rings.map((ratio) => {
@@ -81,7 +81,7 @@ function OctalysisRadar({ stats }: { stats: Student["octalysis"] }) {
           strokeWidth="1.2"
         />
 
-        {/* Student Octalysis Polygon */}
+        {/* Student Competency Polygon */}
         <polygon
           points={points}
           fill="#8B5CF6"
@@ -145,7 +145,7 @@ export function CharacterSheet({
     Math.round((student.xp / student.xpToNext) * 100)
   );
 
-  const pillars: OctalysisPillar[] = [
+  const pillars: EngagementPillar[] = [
     "proposito",
     "maestria",
     "criatividade",
@@ -237,7 +237,7 @@ export function CharacterSheet({
           </div>
           {hpPercent <= 55 && (
             <p className="text-[11px] font-bold text-[#F43F5E]">
-              Atenção: conclua missões ou procure a Salinha para recuperar HP!
+              Atenção: conclua missões ou participe do Espaço Híbrido para recuperar HP!
             </p>
           )}
         </div>
@@ -261,24 +261,24 @@ export function CharacterSheet({
         </div>
       </div>
 
-      {/* Octalysis Attributes */}
+      {/* Competency Attributes */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-hand text-2xl leading-none text-zinc-900 flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
-            Atributos Octalysis
+            Bússola de Competências
           </h3>
           <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 bg-violet-100 border border-zinc-900 rounded-md">
-            RPG Escolar
+            Perfil Escolar
           </span>
         </div>
 
-        <OctalysisRadar stats={student.octalysis} />
+        <CompetencyRadar stats={student.pillars} />
 
         <div className="space-y-2">
           {pillars.map((pillar) => {
-            const meta = OCTALYSIS_META[pillar];
-            const val = student.octalysis[pillar];
+            const meta = PILLAR_META[pillar];
+            const val = student.pillars[pillar];
             return (
               <div key={pillar} className="space-y-0.5">
                 <div className="flex items-center justify-between text-xs font-bold">

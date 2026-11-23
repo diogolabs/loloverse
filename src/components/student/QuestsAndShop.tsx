@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { useLoloverse } from "@/context/LoloverseContext";
 import { Student } from "@/types";
-import { OctalysisBadge } from "@/components/shared/OctalysisBadge";
+import { PillarBadge } from "@/components/shared/PillarBadge";
 
 function RewardIcon({ name }: { name: string }) {
   const cls = "w-5 h-5";
@@ -145,7 +145,7 @@ export function QuestsAndShop({ student }: { student: Student }) {
                             ? "Diária"
                             : "Tarefa de Casa"}
                         </span>
-                        <OctalysisBadge pillar={quest.pillar} />
+                        <PillarBadge pillar={quest.pillar} />
                         <span className="text-xs font-bold text-zinc-500">
                           Prazo: {quest.dueDate}
                         </span>
