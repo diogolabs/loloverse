@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #FAF8F5;
+    color: #18181B;
+    background-image: radial-gradient(#d5d0c8 1.25px, transparent 1.25px);
+    background-size: 22px 22px;
+    background-attachment: fixed;
+  }
+}
+
+@layer components {
+  .sketch-card {
+    @apply bg-white border-2 border-zinc-900 rounded-xl shadow-[4px_4px_0px_0px_rgba(24,24,27,1)];
+  }
+
+  .sketch-card-sm {
+    @apply bg-white border-2 border-zinc-900 rounded-xl shadow-[2px_2px_0px_0px_rgba(24,24,27,1)];
+  }
+
+  .sketch-btn {
+    @apply inline-flex items-center justify-center gap-2 font-semibold border-2 border-zinc-900 rounded-xl shadow-[3px_3px_0px_0px_rgba(24,24,27,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all cursor-pointer select-none;
+  }
+
+  .sketch-btn-sm {
+    @apply inline-flex items-center justify-center gap-1.5 font-semibold border-2 border-zinc-900 rounded-lg shadow-[2px_2px_0px_0px_rgba(24,24,27,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all cursor-pointer select-none;
+  }
+
+  .sketch-input {
+    @apply w-full bg-[#FAF8F5] border-2 border-zinc-900 rounded-xl px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#FACC15];
+  }
+
+  .highlighter-mark {
+    background: linear-gradient(180deg, transparent 58%, #FACC15 58%, #FACC15 92%, transparent 92%);
+  }
+}
+
+/* Custom subtle sketchbook scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #FAF8F5;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border: 2px solid #FAF8F5;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #18181B;
+}
