@@ -1,5 +1,7 @@
 # Loloverse · Gestão Escolar, Missões RPG & Espaço Híbrido
 
+> **Documentação de continuidade:** Consulte [PROJECT_LOG.md](./PROJECT_LOG.md) para ver o estado atual, decisões de produto, mapa de arquivos e histórico completo de alterações.
+
 MVP funcional de uma plataforma educacional que une gestão escolar, feedback comportamental em sala, sistema de missões e evolução por competências e um **Espaço Híbrido** organizado em Categorias, Canais, Tópicos Guiados e Mesas de Estudo com identidade visual **Caderno Vivo (Sketchbook Neobrutalism)**.
 
 ## Contas de Teste & Autenticação
