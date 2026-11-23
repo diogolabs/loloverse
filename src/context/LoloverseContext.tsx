@@ -5,11 +5,13 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { INITIAL_STATE } from "@/data/mockData";
 import {
+  Account,
   ActivityLog,
   AttendanceStatus,
   BehaviorPreset,
@@ -19,17 +21,44 @@ import {
   Quest,
   QuestType,
   ShopReward,
+  Student,
   ToastItem,
 } from "@/types";
 
-const STORAGE_KEY = "loloverse_mvp_state_v1";
+const STORAGE_KEY = "loloverse_mvp_state_v2";
+const SESSION_KEY = "loloverse_session_account_id_v2";
+
+const AVATAR_PALETTE = [
+  "#FACC15",
+  "#10B981",
+  "#3B82F6",
+  "#8B5CF6",
+  "#FB923C",
+  "#EC4899",
+  "#06B6D4",
+];
+
+interface LoginResult {
+  ok: boolean;
+  error?: string;
+}
+
+interface RegisterInput {
+  displayName: string;
+  username: string;
+  password: string;
+  role: Persona;
+  classId?: string;
+}
 
 interface LoloverseContextValue {
   state: LoloverseState;
+  currentAccount: Account | null;
   persona: Persona;
-  setPersona: (persona: Persona) => void;
+  login: (identifier: string, password: string) => LoginResult;
+  registerAccount: (input: RegisterInput) => LoginResult;
+  logout: () => void;
   setSelectedClassId: (classId: string) => void;
-  setActiveStudentId: (studentId: string) => void;
   updateAttendance: (studentId: string, status: AttendanceStatus) => void;
   applyBehaviorFeedback: (studentId: string, preset: BehaviorPreset) => void;
   createQuest: (input: {
@@ -46,8 +75,16 @@ interface LoloverseContextValue {
   toggleQuestActive: (questId: string) => void;
   completeQuestAsStudent: (questId: string, studentId: string) => void;
   redeemReward: (rewardId: string, studentId: string) => void;
-  sendChatMessage: (channelId: string, content: string, asPersona?: Persona) => void;
+  sendChatMessage: (channelId: string, content: string) => void;
   toggleReaction: (messageId: string, emoji: string) => void;
+  togglePinMessage: (messageId: string) => void;
+  createChannel: (label: string, description: string) => void;
+  joinStudyRoom: (roomId: string) => void;
+  leaveStudyRoom: () => void;
+  updateMyStudyStatus: (
+    onlineStatus: Student["onlineStatus"],
+    studyActivity: string
+  ) => void;
   toggleRewardApproval: (rewardId: string) => void;
   updateRewardCost: (rewardId: string, newCost: number) => void;
   createReward: (input: {
@@ -57,7 +94,11 @@ interface LoloverseContextValue {
     category: ShopReward["category"];
     stockLimit: number;
   }) => void;
-  registerIntervention: (studentId: string, note: string, restoreHp?: number) => void;
+  registerIntervention: (
+    studentId: string,
+    note: string,
+    restoreHp?: number
+  ) => void;
   resetDemoData: () => void;
   toasts: ToastItem[];
   dismissToast: (id: string) => void;
@@ -82,9 +123,19 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
   const stateRef = useRef<LoloverseState>(state);
   stateRef.current = state;
 
-  const [persona, setPersona] = useState<Persona>("teacher");
+  const [currentAccountId, setCurrentAccountId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [hydrated, setHydrated] = useState(false);
+
+  const currentAccount = useMemo(
+    () => state.accounts.find((a) => a.id === currentAccountId) || null,
+    [state.accounts, currentAccountId]
+  );
+
+  const currentAccountRef = useRef<Account | null>(currentAccount);
+  currentAccountRef.current = currentAccount;
+
+  const persona: Persona = currentAccount?.role || "teacher";
 
   const pushToast = useCallback(
     (
@@ -93,7 +144,10 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       variant: ToastItem["variant"] = "info"
     ) => {
       const id = uid("toast");
-      setToasts((prev) => [...prev.slice(-3), { id, title, description, variant }]);
+      setToasts((prev) => [
+        ...prev.slice(-3),
+        { id, title, description, variant },
+      ]);
       setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== id));
       }, 3800);
@@ -105,27 +159,36 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Load persisted state from localStorage on mount
+  // Hydrate shared DB from localStorage + per-tab session from sessionStorage
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<LoloverseState>;
-        if (parsed && Array.isArray(parsed.students) && Array.isArray(parsed.quests)) {
+        if (
+          parsed &&
+          Array.isArray(parsed.students) &&
+          Array.isArray(parsed.accounts) &&
+          Array.isArray(parsed.studyRooms)
+        ) {
           setState({
             ...INITIAL_STATE,
             ...parsed,
           });
         }
       }
+      const savedSession = window.sessionStorage.getItem(SESSION_KEY);
+      if (savedSession) {
+        setCurrentAccountId(savedSession);
+      }
     } catch {
-      // Ignore storage errors and keep initial state
+      // Ignore storage errors
     } finally {
       setHydrated(true);
     }
   }, []);
 
-  // Persist to localStorage whenever state changes after hydration
+  // Persist shared DB to localStorage
   useEffect(() => {
     if (!hydrated) return;
     try {
@@ -135,29 +198,271 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state, hydrated]);
 
-  const setSelectedClassId = useCallback((classId: string) => {
-    setState((prev) => ({ ...prev, selectedClassId: classId }));
+  // Real-time cross-tab synchronization (e.g., Teacher tab + Student tab side by side!)
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY || !event.newValue) return;
+      try {
+        const parsed = JSON.parse(event.newValue) as Partial<LoloverseState>;
+        if (
+          parsed &&
+          Array.isArray(parsed.students) &&
+          Array.isArray(parsed.accounts)
+        ) {
+          setState({
+            ...INITIAL_STATE,
+            ...parsed,
+          });
+        }
+      } catch {
+        // Ignore malformed external updates
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  const setActiveStudentId = useCallback((studentId: string) => {
-    setState((prev) => ({ ...prev, activeStudentId: studentId }));
+  const persistSession = useCallback((accountId: string | null) => {
+    setCurrentAccountId(accountId);
+    try {
+      if (accountId) {
+        window.sessionStorage.setItem(SESSION_KEY, accountId);
+      } else {
+        window.sessionStorage.removeItem(SESSION_KEY);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
+  const login = useCallback(
+    (identifier: string, password: string): LoginResult => {
+      const cleanId = identifier.trim().toLowerCase();
+      const cleanPass = password.trim();
+      if (!cleanId || !cleanPass) {
+        return { ok: false, error: "Informe usuário/e-mail e senha." };
+      }
+
+      const found = stateRef.current.accounts.find(
+        (acc) =>
+          (acc.username.toLowerCase() === cleanId ||
+            acc.email.toLowerCase() === cleanId) &&
+          acc.password === cleanPass
+      );
+
+      if (!found) {
+        return {
+          ok: false,
+          error:
+            "Usuário ou senha incorretos. Dica: nas contas de teste a senha padrão é 123.",
+        };
+      }
+
+      persistSession(found.id);
+
+      setState((prev) => ({
+        ...prev,
+        selectedClassId: found.classId || prev.selectedClassId,
+        activeStudentId: found.studentId || prev.activeStudentId,
+        students: found.studentId
+          ? prev.students.map((s) =>
+              s.id === found.studentId && s.onlineStatus === "offline"
+                ? {
+                    ...s,
+                    onlineStatus: "online",
+                    studyActivity: "Acabou de entrar no Loloverse",
+                  }
+                : s
+            )
+          : prev.students,
+      }));
+
+      pushToast(
+        `Bem-vindo(a), ${found.displayName}!`,
+        `Sessão iniciada como @${found.username}`,
+        "success"
+      );
+
+      return { ok: true };
+    },
+    [persistSession, pushToast]
+  );
+
+  const registerAccount = useCallback(
+    (input: RegisterInput): LoginResult => {
+      const displayName = input.displayName.trim();
+      const username = input.username
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]/g, "");
+      const password = input.password.trim();
+
+      if (displayName.length < 2) {
+        return { ok: false, error: "Informe seu nome completo." };
+      }
+      if (username.length < 3) {
+        return {
+          ok: false,
+          error: "O usuário precisa ter pelo menos 3 caracteres (letras/números).",
+        };
+      }
+      if (password.length < 3) {
+        return {
+          ok: false,
+          error: "Escolha uma senha com pelo menos 3 caracteres.",
+        };
+      }
+
+      const exists = stateRef.current.accounts.some(
+        (a) => a.username.toLowerCase() === username
+      );
+      if (exists) {
+        return {
+          ok: false,
+          error: `O usuário "@${username}" já existe. Escolha outro.`,
+        };
+      }
+
+      const seed = stateRef.current.accounts.length + 3;
+      const color = AVATAR_PALETTE[seed % AVATAR_PALETTE.length];
+      const chosenClassId =
+        input.classId || stateRef.current.classes[0]?.id || "class-8a";
+
+      const newStudentId =
+        input.role === "student" ? uid("stu") : undefined;
+
+      const newAccount: Account = {
+        id: uid("acc"),
+        username,
+        email: `${username}@loloverse.edu.br`,
+        password,
+        displayName,
+        role: input.role,
+        avatarSeed: seed,
+        avatarColor: color,
+        studentId: newStudentId,
+        classId: input.role === "coordinator" ? undefined : chosenClassId,
+        bio:
+          input.role === "student"
+            ? "Aventureiro(a) Maker"
+            : input.role === "teacher"
+            ? "Docente Loloverse"
+            : "Coordenação Pedagógica",
+      };
+
+      const newStudent: Student | null =
+        input.role === "student" && newStudentId
+          ? {
+              id: newStudentId,
+              name: displayName,
+              classId: chosenClassId,
+              avatarSeed: seed,
+              avatarColor: color,
+              roleTitle: "Aventureiro(a) Maker",
+              level: 1,
+              xp: 40,
+              xpToNext: 200,
+              hp: 100,
+              maxHp: 100,
+              gold: 50,
+              attendanceToday: "presente",
+              attendanceRate: 100,
+              bimesterAverage: 8.0,
+              previousAverage: 8.0,
+              deliveryRate: 100,
+              streakDays: 1,
+              onlineStatus: "online",
+              studyActivity: "Explorando o Loloverse!",
+              octalysis: {
+                proposito: 60,
+                maestria: 60,
+                criatividade: 65,
+                social: 60,
+              },
+              badges: ["Novo no Loloverse"],
+              interventionsCount: 0,
+            }
+          : null;
+
+      const newLog: ActivityLog = {
+        id: uid("log"),
+        timestamp: nowLabel(),
+        actor: displayName,
+        target: `@${username}`,
+        action: `Criou nova conta (${
+          input.role === "student"
+            ? "Aluno"
+            : input.role === "teacher"
+            ? "Professor"
+            : "Coordenador"
+        })`,
+        category: "conta",
+        deltaSummary: newStudent ? "Ficha RPG Nv.1" : "Acesso liberado",
+      };
+
+      setState((prev) => ({
+        ...prev,
+        accounts: [...prev.accounts, newAccount],
+        students: newStudent ? [...prev.students, newStudent] : prev.students,
+        selectedClassId: newAccount.classId || prev.selectedClassId,
+        activeStudentId: newStudentId || prev.activeStudentId,
+        logs: [newLog, ...prev.logs].slice(0, 40),
+      }));
+
+      persistSession(newAccount.id);
+
+      pushToast(
+        "Conta criada com sucesso!",
+        `Você entrou como ${displayName} (@${username}).`,
+        "success"
+      );
+
+      return { ok: true };
+    },
+    [persistSession, pushToast]
+  );
+
+  const logout = useCallback(() => {
+    const acc = currentAccountRef.current;
+    if (acc) {
+      setState((prev) => ({
+        ...prev,
+        studyRooms: prev.studyRooms.map((r) => ({
+          ...r,
+          participantIds: r.participantIds.filter((id) => id !== acc.id),
+        })),
+      }));
+    }
+    persistSession(null);
+    pushToast("Sessão encerrada", "Escolha ou crie outra conta para testar.", "info");
+  }, [persistSession, pushToast]);
+
+  const setSelectedClassId = useCallback((classId: string) => {
+    setState((prev) => ({ ...prev, selectedClassId: classId }));
   }, []);
 
   const updateAttendance = useCallback(
     (studentId: string, status: AttendanceStatus) => {
       const target = stateRef.current.students.find((s) => s.id === studentId);
       if (!target) return;
+      const actorName =
+        currentAccountRef.current?.displayName || "Prof. Rafael Andrade";
 
       setState((prev) => {
         const students = prev.students.map((s) => {
           if (s.id !== studentId) return s;
           let rateDelta = 0;
           if (s.attendanceToday !== status) {
-            if (status === "presente") rateDelta = s.attendanceToday === "falta" ? 2 : 1;
+            if (status === "presente")
+              rateDelta = s.attendanceToday === "falta" ? 2 : 1;
             if (status === "falta") rateDelta = -2;
-            if (status === "atraso") rateDelta = s.attendanceToday === "falta" ? 1 : -1;
+            if (status === "atraso")
+              rateDelta = s.attendanceToday === "falta" ? 1 : -1;
           }
-          const nextRate = Math.max(40, Math.min(100, s.attendanceRate + rateDelta));
+          const nextRate = Math.max(
+            40,
+            Math.min(100, s.attendanceRate + rateDelta)
+          );
           const nextHp =
             status === "falta" && s.attendanceToday !== "falta"
               ? Math.max(10, s.hp - 5)
@@ -181,7 +486,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         const newLog: ActivityLog = {
           id: uid("log"),
           timestamp: nowLabel(),
-          actor: "Prof. Rafael Andrade",
+          actor: actorName,
           target: target.name,
           action: `Atualizou frequência para ${statusMap[status]}`,
           category: "frequencia",
@@ -200,7 +505,10 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         };
       });
 
-      const labels: Record<AttendanceStatus, { text: string; variant: ToastItem["variant"] }> = {
+      const labels: Record<
+        AttendanceStatus,
+        { text: string; variant: ToastItem["variant"] }
+      > = {
         presente: { text: "Presença confirmada", variant: "success" },
         atraso: { text: "Atraso registrado", variant: "warning" },
         falta: { text: "Falta registrada (-5 HP)", variant: "danger" },
@@ -218,6 +526,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     (studentId: string, preset: BehaviorPreset) => {
       const target = stateRef.current.students.find((s) => s.id === studentId);
       if (!target) return;
+      const actorName =
+        currentAccountRef.current?.displayName || "Prof. Rafael Andrade";
 
       let previewXp = target.xp + preset.xpDelta;
       let previewLevel = target.level;
@@ -268,16 +578,23 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         });
 
         const parts: string[] = [];
-        if (preset.xpDelta !== 0) parts.push(`${preset.xpDelta > 0 ? "+" : ""}${preset.xpDelta} XP`);
-        if (preset.goldDelta !== 0) parts.push(`${preset.goldDelta > 0 ? "+" : ""}${preset.goldDelta} Ouro`);
-        if (preset.hpDelta !== 0) parts.push(`${preset.hpDelta > 0 ? "+" : ""}${preset.hpDelta} HP`);
+        if (preset.xpDelta !== 0)
+          parts.push(`${preset.xpDelta > 0 ? "+" : ""}${preset.xpDelta} XP`);
+        if (preset.goldDelta !== 0)
+          parts.push(
+            `${preset.goldDelta > 0 ? "+" : ""}${preset.goldDelta} Ouro`
+          );
+        if (preset.hpDelta !== 0)
+          parts.push(`${preset.hpDelta > 0 ? "+" : ""}${preset.hpDelta} HP`);
 
         const newLog: ActivityLog = {
           id: uid("log"),
           timestamp: nowLabel(),
-          actor: "Prof. Rafael Andrade",
+          actor: actorName,
           target: target.name,
-          action: `${preset.type === "positive" ? "Concedeu" : "Registrou alerta:"} ${preset.label}`,
+          action: `${
+            preset.type === "positive" ? "Concedeu" : "Registrou alerta:"
+          } ${preset.label}`,
           category: "comportamento",
           deltaSummary: parts.join(" · "),
         };
@@ -290,9 +607,15 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       });
 
       const deltaText = [
-        preset.xpDelta ? `${preset.xpDelta > 0 ? "+" : ""}${preset.xpDelta} XP` : "",
-        preset.goldDelta ? `${preset.goldDelta > 0 ? "+" : ""}${preset.goldDelta} Ouro` : "",
-        preset.hpDelta ? `${preset.hpDelta > 0 ? "+" : ""}${preset.hpDelta} HP` : "",
+        preset.xpDelta
+          ? `${preset.xpDelta > 0 ? "+" : ""}${preset.xpDelta} XP`
+          : "",
+        preset.goldDelta
+          ? `${preset.goldDelta > 0 ? "+" : ""}${preset.goldDelta} Ouro`
+          : "",
+        preset.hpDelta
+          ? `${preset.hpDelta > 0 ? "+" : ""}${preset.hpDelta} HP`
+          : "",
       ]
         .filter(Boolean)
         .join(" · ");
@@ -326,6 +649,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       dueDate: string;
       bossTargetPercent?: number;
     }) => {
+      const actorName =
+        currentAccountRef.current?.displayName || "Prof. Rafael Andrade";
       const newQuest: Quest = {
         id: uid("q"),
         classId: input.classId,
@@ -338,7 +663,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         dueDate: input.dueDate.trim() || "Esta semana",
         active: true,
         completedBy: [],
-        bossTargetPercent: input.type === "boss" ? input.bossTargetPercent ?? 85 : undefined,
+        bossTargetPercent:
+          input.type === "boss" ? input.bossTargetPercent ?? 85 : undefined,
       };
 
       setState((prev) => {
@@ -346,7 +672,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         const newLog: ActivityLog = {
           id: uid("log"),
           timestamp: nowLabel(),
-          actor: "Prof. Rafael Andrade",
+          actor: actorName,
           target: cls?.name || "Turma",
           action: `Criou missão "${newQuest.title}"`,
           category: "quest",
@@ -575,58 +901,37 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     [pushToast]
   );
 
-  const sendChatMessage = useCallback(
-    (channelId: string, content: string, asPersona: Persona = "student") => {
-      const trimmed = content.trim();
-      if (!trimmed) return;
+  const sendChatMessage = useCallback((channelId: string, content: string) => {
+    const trimmed = content.trim();
+    const acc = currentAccountRef.current;
+    if (!trimmed || !acc) return;
 
-      setState((prev) => {
-        const activeStudent =
-          prev.students.find((s) => s.id === prev.activeStudentId) ||
-          prev.students[0];
+    const authorRole: "professor" | "aluno" | "coordenador" =
+      acc.role === "teacher"
+        ? "professor"
+        : acc.role === "coordinator"
+        ? "coordenador"
+        : "aluno";
 
-        const authorInfo =
-          asPersona === "teacher"
-            ? {
-                authorId: "prof-rafael",
-                authorName: "Prof. Rafael Andrade",
-                authorRole: "professor" as const,
-                avatarSeed: 20,
-                avatarColor: "#3B82F6",
-              }
-            : asPersona === "coordinator"
-            ? {
-                authorId: "coord-helena",
-                authorName: "Coord. Helena Prado",
-                authorRole: "coordenador" as const,
-                avatarSeed: 21,
-                avatarColor: "#8B5CF6",
-              }
-            : {
-                authorId: activeStudent.id,
-                authorName: activeStudent.name,
-                authorRole: "aluno" as const,
-                avatarSeed: activeStudent.avatarSeed,
-                avatarColor: activeStudent.avatarColor,
-              };
-
-        const newMsg = {
+    setState((prev) => ({
+      ...prev,
+      messages: [
+        ...prev.messages,
+        {
           id: uid("msg"),
           channelId,
-          ...authorInfo,
+          authorId: acc.id,
+          authorName: acc.displayName,
+          authorRole,
+          avatarSeed: acc.avatarSeed,
+          avatarColor: acc.avatarColor,
           content: trimmed,
           timestamp: nowLabel(),
           reactions: [],
-        };
-
-        return {
-          ...prev,
-          messages: [...prev.messages, newMsg],
-        };
-      });
-    },
-    []
-  );
+        },
+      ],
+    }));
+  }, []);
 
   const toggleReaction = useCallback((messageId: string, emoji: string) => {
     setState((prev) => ({
@@ -658,11 +963,143 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const togglePinMessage = useCallback(
+    (messageId: string) => {
+      setState((prev) => ({
+        ...prev,
+        messages: prev.messages.map((m) =>
+          m.id === messageId ? { ...m, pinned: !m.pinned } : m
+        ),
+      }));
+      pushToast("Mural atualizado", "Status de fixação da mensagem alterado.", "info");
+    },
+    [pushToast]
+  );
+
+  const createChannel = useCallback(
+    (label: string, description: string) => {
+      const clean = label
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-|-$/g, "");
+      if (!clean) return;
+      const newChannel = {
+        id: uid("ch"),
+        slug: `#${clean}`,
+        label: clean,
+        description:
+          description.trim() || "Canal colaborativo da Salinha Híbrida.",
+      };
+      setState((prev) => ({
+        ...prev,
+        channels: [...prev.channels, newChannel],
+      }));
+      pushToast(
+        `Canal #${clean} criado!`,
+        "Todos os participantes da Salinha já podem conversar nele.",
+        "success"
+      );
+    },
+    [pushToast]
+  );
+
+  const joinStudyRoom = useCallback(
+    (roomId: string) => {
+      const acc = currentAccountRef.current;
+      if (!acc) return;
+      const room = stateRef.current.studyRooms.find((r) => r.id === roomId);
+      if (!room) return;
+
+      setState((prev) => ({
+        ...prev,
+        studyRooms: prev.studyRooms.map((r) => {
+          const withoutMe = r.participantIds.filter((id) => id !== acc.id);
+          if (r.id === roomId && withoutMe.length < r.maxSeats) {
+            return { ...r, participantIds: [...withoutMe, acc.id] };
+          }
+          return { ...r, participantIds: withoutMe };
+        }),
+        students: acc.studentId
+          ? prev.students.map((s) =>
+              s.id === acc.studentId
+                ? {
+                    ...s,
+                    onlineStatus: "em-grupo",
+                    studyActivity: `Na sala: ${room.name}`,
+                  }
+                : s
+            )
+          : prev.students,
+      }));
+
+      pushToast(
+        `Você entrou em "${room.name}"`,
+        "Seu status na Salinha foi atualizado para Em Grupo.",
+        "success"
+      );
+    },
+    [pushToast]
+  );
+
+  const leaveStudyRoom = useCallback(() => {
+    const acc = currentAccountRef.current;
+    if (!acc) return;
+
+    setState((prev) => ({
+      ...prev,
+      studyRooms: prev.studyRooms.map((r) => ({
+        ...r,
+        participantIds: r.participantIds.filter((id) => id !== acc.id),
+      })),
+      students: acc.studentId
+        ? prev.students.map((s) =>
+            s.id === acc.studentId
+              ? {
+                  ...s,
+                  onlineStatus: "online",
+                  studyActivity: "Disponível na Salinha",
+                }
+              : s
+          )
+        : prev.students,
+    }));
+
+    pushToast("Saiu da mesa de estudo", "Você voltou para o lobby da Salinha.", "info");
+  }, [pushToast]);
+
+  const updateMyStudyStatus = useCallback(
+    (onlineStatus: Student["onlineStatus"], studyActivity: string) => {
+      const acc = currentAccountRef.current;
+      if (!acc?.studentId) return;
+
+      setState((prev) => ({
+        ...prev,
+        students: prev.students.map((s) =>
+          s.id === acc.studentId
+            ? {
+                ...s,
+                onlineStatus,
+                studyActivity: studyActivity.trim() || "Estudando no Loloverse",
+              }
+            : s
+        ),
+      }));
+
+      pushToast("Status de estudo atualizado!", studyActivity.trim() || undefined, "info");
+    },
+    [pushToast]
+  );
+
   const toggleRewardApproval = useCallback(
     (rewardId: string) => {
       const target = stateRef.current.rewards.find((r) => r.id === rewardId);
       if (!target) return;
       const approvedNow = !target.approved;
+      const actorName =
+        currentAccountRef.current?.displayName || "Coord. Helena Prado";
 
       setState((prev) => {
         const rewards = prev.rewards.map((r) =>
@@ -672,7 +1109,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         const newLog: ActivityLog = {
           id: uid("log"),
           timestamp: nowLabel(),
-          actor: "Coord. Helena Prado",
+          actor: actorName,
           target: target.title,
           action: approvedNow
             ? "Aprovou item na Lojinha da Escola"
@@ -702,6 +1139,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       const target = stateRef.current.rewards.find((r) => r.id === rewardId);
       if (!target) return;
       const clamped = Math.max(10, Math.min(500, newCost));
+      const actorName =
+        currentAccountRef.current?.displayName || "Coord. Helena Prado";
 
       setState((prev) => {
         const rewards = prev.rewards.map((r) =>
@@ -711,7 +1150,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         const newLog: ActivityLog = {
           id: uid("log"),
           timestamp: nowLabel(),
-          actor: "Coord. Helena Prado",
+          actor: actorName,
           target: target.title,
           action: `Ajustou preço para ${clamped} Ouro`,
           category: "governanca",
@@ -741,6 +1180,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       category: ShopReward["category"];
       stockLimit: number;
     }) => {
+      const actorName =
+        currentAccountRef.current?.displayName || "Coord. Helena Prado";
       const newReward: ShopReward = {
         id: uid("rew"),
         title: input.title.trim(),
@@ -755,7 +1196,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       const newLog: ActivityLog = {
         id: uid("log"),
         timestamp: nowLabel(),
-        actor: "Coord. Helena Prado",
+        actor: actorName,
         target: newReward.title,
         action: "Adicionou nova recompensa aprovada na Lojinha",
         category: "governanca",
@@ -779,6 +1220,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     (studentId: string, note: string, restoreHp = 15) => {
       const target = stateRef.current.students.find((s) => s.id === studentId);
       if (!target) return;
+      const actorName =
+        currentAccountRef.current?.displayName || "Coord. Helena Prado";
 
       setState((prev) => {
         const students = prev.students.map((s) => {
@@ -795,7 +1238,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         const newLog: ActivityLog = {
           id: uid("log"),
           timestamp: nowLabel(),
-          actor: "Coord. Helena Prado",
+          actor: actorName,
           target: target.name,
           action: `Intervenção pedagógica: ${note.trim() || "Acolhimento"}`,
           category: "intervencao",
@@ -827,7 +1270,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     setState(INITIAL_STATE);
     pushToast(
       "Dados da demo resetados!",
-      "Todos os pontos, presenças, missões e mensagens voltaram ao estado inicial.",
+      "Contas, pontos, presenças, missões e Salinha voltaram ao estado inicial.",
       "info"
     );
   }, [pushToast]);
@@ -836,10 +1279,12 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     <LoloverseContext.Provider
       value={{
         state,
+        currentAccount,
         persona,
-        setPersona,
+        login,
+        registerAccount,
+        logout,
         setSelectedClassId,
-        setActiveStudentId,
         updateAttendance,
         applyBehaviorFeedback,
         createQuest,
@@ -848,6 +1293,11 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         redeemReward,
         sendChatMessage,
         toggleReaction,
+        togglePinMessage,
+        createChannel,
+        joinStudyRoom,
+        leaveStudyRoom,
+        updateMyStudyStatus,
         toggleRewardApproval,
         updateRewardCost,
         createReward,

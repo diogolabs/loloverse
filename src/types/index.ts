@@ -6,6 +6,28 @@ export type OctalysisPillar = "proposito" | "maestria" | "criatividade" | "socia
 
 export type QuestType = "diaria" | "tarefa" | "boss";
 
+export interface Account {
+  id: string;
+  username: string;
+  email: string;
+  password: string;
+  displayName: string;
+  role: Persona;
+  avatarSeed: number;
+  avatarColor: string;
+  studentId?: string;
+  classId?: string;
+  bio?: string;
+}
+
+export interface StudyRoom {
+  id: string;
+  name: string;
+  topic: string;
+  maxSeats: number;
+  participantIds: string[]; // account IDs currently inside the room
+}
+
 export interface OctalysisStats {
   proposito: number;
   maestria: number;
@@ -139,7 +161,8 @@ export interface ActivityLog {
     | "quest"
     | "loja"
     | "intervencao"
-    | "governanca";
+    | "governanca"
+    | "conta";
   deltaSummary?: string;
 }
 
@@ -151,6 +174,8 @@ export interface ToastItem {
 }
 
 export interface LoloverseState {
+  accounts: Account[];
+  studyRooms: StudyRoom[];
   classes: ClassRoom[];
   students: Student[];
   quests: Quest[];

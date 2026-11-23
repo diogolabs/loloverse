@@ -1,13 +1,16 @@
 "use client";
 
 import React, { useState } from "react";
-import { Scale, ShieldAlert } from "lucide-react";
+import { MessageSquare, Scale, ShieldAlert } from "lucide-react";
+import { useLoloverse } from "@/context/LoloverseContext";
 import { ExecutiveKpis } from "@/components/coordinator/ExecutiveKpis";
 import { AttentionRadar } from "@/components/coordinator/AttentionRadar";
 import { EconomyAudit } from "@/components/coordinator/EconomyAudit";
+import { SalinhaHub } from "@/components/student/SalinhaHub";
 
 export function CoordinatorView() {
-  const [tab, setTab] = useState<"radar" | "economy">("radar");
+  const { currentAccount } = useLoloverse();
+  const [tab, setTab] = useState<"radar" | "economy" | "salinha">("radar");
 
   return (
     <div className="space-y-6">
@@ -18,7 +21,8 @@ export function CoordinatorView() {
             Visão do Coordenador · Governança & Inteligência Escolar
           </div>
           <h1 className="font-hand text-3xl sm:text-4xl text-zinc-900 leading-tight mt-1">
-            Painel Executivo · Coord. Helena Prado
+            Painel Executivo ·{" "}
+            {currentAccount?.displayName || "Coord. Helena Prado"}
           </h1>
           <p className="text-xs sm:text-sm text-zinc-600 font-medium">
             Monitoramento preventivo de evasão (Octalysis CD8), auditoria pedagógica e equilíbrio da economia de Ouro.
@@ -36,7 +40,7 @@ export function CoordinatorView() {
             }`}
           >
             <ShieldAlert className="w-4 h-4" />
-            Radar de Atenção (CD8)
+            Radar (CD8)
           </button>
           <button
             type="button"
@@ -50,6 +54,18 @@ export function CoordinatorView() {
             <Scale className="w-4 h-4" />
             Auditoria & Economia
           </button>
+          <button
+            type="button"
+            onClick={() => setTab("salinha")}
+            className={`sketch-btn px-4 py-2.5 text-sm ${
+              tab === "salinha"
+                ? "bg-[#10B981] text-zinc-950"
+                : "bg-white text-zinc-700 hover:bg-emerald-50"
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" />
+            Salinha Híbrida
+          </button>
         </div>
       </section>
 
@@ -57,7 +73,9 @@ export function CoordinatorView() {
       <ExecutiveKpis />
 
       {/* Active Coordinator Section */}
-      {tab === "radar" ? <AttentionRadar /> : <EconomyAudit />}
+      {tab === "radar" && <AttentionRadar />}
+      {tab === "economy" && <EconomyAudit />}
+      {tab === "salinha" && <SalinhaHub />}
     </div>
   );
 }

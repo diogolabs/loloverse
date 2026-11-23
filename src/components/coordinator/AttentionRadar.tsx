@@ -4,9 +4,9 @@ import React, { useState } from "react";
 import {
   AlertTriangle,
   HeartHandshake,
+  KeyRound,
   ShieldAlert,
   TrendingDown,
-  UserSearch,
 } from "lucide-react";
 import { useLoloverse } from "@/context/LoloverseContext";
 import { Student } from "@/types";
@@ -24,8 +24,7 @@ function getSuggestedIntervention(student: Student): string {
 }
 
 export function AttentionRadar() {
-  const { state, registerIntervention, setActiveStudentId, setPersona } =
-    useLoloverse();
+  const { state, registerIntervention } = useLoloverse();
   const [notes, setNotes] = useState<Record<string, string>>({});
 
   const atRiskStudents = state.students
@@ -78,6 +77,7 @@ export function AttentionRadar() {
         <div className="space-y-4">
           {atRiskStudents.map((student) => {
             const cls = state.classes.find((c) => c.id === student.classId);
+            const acc = state.accounts.find((a) => a.studentId === student.id);
             const gradeDrop = Number(
               (student.previousAverage - student.bimesterAverage).toFixed(1)
             );
@@ -127,9 +127,10 @@ export function AttentionRadar() {
                       </div>
 
                       <p className="text-xs text-zinc-600">
-                        Média atual: <strong>{student.bimesterAverage.toFixed(1)}</strong>{" "}
-                        (anterior: {student.previousAverage.toFixed(1)}) · Entregas:{" "}
-                        <strong>{student.deliveryRate}%</strong>
+                        Média atual:{" "}
+                        <strong>{student.bimesterAverage.toFixed(1)}</strong>{" "}
+                        (anterior: {student.previousAverage.toFixed(1)}) ·
+                        Entregas: <strong>{student.deliveryRate}%</strong>
                         {student.lastInterventionNote && (
                           <>
                             {" "}
@@ -143,17 +144,12 @@ export function AttentionRadar() {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveStudentId(student.id);
-                      setPersona("student");
-                    }}
-                    className="sketch-btn-sm px-3 py-1.5 bg-[#FAF8F5] hover:bg-blue-50 text-xs shrink-0 self-start"
-                  >
-                    <UserSearch className="w-3.5 h-3.5" />
-                    Abrir Ficha do Aluno
-                  </button>
+                  {acc && (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF8F5] border-2 border-zinc-900 rounded-xl text-xs font-mono font-bold shrink-0 self-start">
+                      <KeyRound className="w-3.5 h-3.5 text-[#8B5CF6]" />
+                      @{acc.username}
+                    </div>
+                  )}
                 </div>
 
                 {/* Pedagogical Suggestion + Action Bar */}

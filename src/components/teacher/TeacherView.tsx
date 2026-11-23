@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import {
   ClipboardCheck,
   MapPin,
+  MessageSquare,
   Sparkles,
   Swords,
   Users,
@@ -12,11 +13,12 @@ import { useLoloverse } from "@/context/LoloverseContext";
 import { AttendancePanel } from "@/components/teacher/AttendancePanel";
 import { ClassDojoGrid } from "@/components/teacher/ClassDojoGrid";
 import { QuestManager } from "@/components/teacher/QuestManager";
+import { SalinhaHub } from "@/components/student/SalinhaHub";
 
-type TeacherTab = "dojo" | "attendance" | "quests";
+type TeacherTab = "dojo" | "attendance" | "quests" | "salinha";
 
 export function TeacherView() {
-  const { state, setSelectedClassId } = useLoloverse();
+  const { state, currentAccount, setSelectedClassId } = useLoloverse();
   const [tab, setTab] = useState<TeacherTab>("dojo");
 
   const selectedClass =
@@ -37,7 +39,7 @@ export function TeacherView() {
             Visão do Professor · Sala Viva
           </div>
           <h1 className="font-hand text-3xl sm:text-4xl text-zinc-900 leading-tight">
-            Olá, {selectedClass.teacherName}!
+            Olá, {currentAccount?.displayName || selectedClass.teacherName}!
           </h1>
           <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm font-semibold text-zinc-600">
             <span className="inline-flex items-center gap-1">
@@ -118,6 +120,19 @@ export function TeacherView() {
           <Swords className="w-4 h-4" />
           Gerenciador de Quests (Habitica)
         </button>
+
+        <button
+          type="button"
+          onClick={() => setTab("salinha")}
+          className={`sketch-btn px-4 py-2.5 text-sm ${
+            tab === "salinha"
+              ? "bg-[#10B981] text-zinc-950"
+              : "bg-white text-zinc-700 hover:bg-emerald-50"
+          }`}
+        >
+          <MessageSquare className="w-4 h-4" />
+          Salinha Híbrida (Moderação)
+        </button>
       </div>
 
       {/* Active Teacher Workspace */}
@@ -125,6 +140,7 @@ export function TeacherView() {
         {tab === "dojo" && <ClassDojoGrid />}
         {tab === "attendance" && <AttendancePanel />}
         {tab === "quests" && <QuestManager />}
+        {tab === "salinha" && <SalinhaHub classId={selectedClass.id} />}
       </div>
     </div>
   );
