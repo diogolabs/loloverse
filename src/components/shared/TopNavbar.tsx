@@ -16,8 +16,14 @@ import { Persona } from "@/types";
 import { SketchAvatar } from "@/components/shared/SketchAvatar";
 
 export function TopNavbar() {
-  const { state, currentAccount, login, logout, resetDemoData } =
-    useLoloverse();
+  const {
+    state,
+    currentAccount,
+    isBackendConnected,
+    login,
+    logout,
+    resetDemoData,
+  } = useLoloverse();
   const [confirmReset, setConfirmReset] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
 
@@ -40,6 +46,11 @@ export function TopNavbar() {
     coordinator: {
       label: "Coordenador",
       bg: "bg-[#8B5CF6] text-white",
+      icon: <ShieldCheck className="w-3.5 h-3.5" />,
+    },
+    admin: {
+      label: "Admin",
+      bg: "bg-zinc-900 text-[#FACC15]",
       icon: <ShieldCheck className="w-3.5 h-3.5" />,
     },
   };
@@ -136,15 +147,17 @@ export function TopNavbar() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowSwitcher(true)}
-              className="sketch-btn-sm px-3 py-2 bg-[#FACC15] text-zinc-950 text-xs"
-              title="Trocar rapidamente para outra conta de teste"
-            >
-              <ArrowLeftRight className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Trocar Conta</span>
-            </button>
+            {!isBackendConnected && (
+              <button
+                type="button"
+                onClick={() => setShowSwitcher(true)}
+                className="sketch-btn-sm px-3 py-2 bg-[#FACC15] text-zinc-950 text-xs"
+                title="Trocar rapidamente para outra conta de teste"
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Trocar Conta</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -156,21 +169,23 @@ export function TopNavbar() {
               <span className="hidden sm:inline">Sair</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleReset}
-              className={`inline-flex items-center gap-1 px-2.5 py-2 text-xs font-bold rounded-lg border-2 transition-all active:translate-x-[1px] active:translate-y-[1px] ${
-                confirmReset
-                  ? "bg-[#F43F5E] text-white border-zinc-900 shadow-[2px_2px_0px_0px_rgba(24,24,27,1)]"
-                  : "bg-white/80 text-zinc-500 border-zinc-300 hover:border-zinc-900 hover:text-zinc-900"
-              }`}
-              title="Restaurar todos os dados iniciais da demonstração"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">
-                {confirmReset ? "Confirmar Reset?" : "Resetar Demo"}
-              </span>
-            </button>
+            {!isBackendConnected && (
+              <button
+                type="button"
+                onClick={handleReset}
+                className={`inline-flex items-center gap-1 px-2.5 py-2 text-xs font-bold rounded-lg border-2 transition-all active:translate-x-[1px] active:translate-y-[1px] ${
+                  confirmReset
+                    ? "bg-[#F43F5E] text-white border-zinc-900 shadow-[2px_2px_0px_0px_rgba(24,24,27,1)]"
+                    : "bg-white/80 text-zinc-500 border-zinc-300 hover:border-zinc-900 hover:text-zinc-900"
+                }`}
+                title="Restaurar todos os dados iniciais da demonstração"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">
+                  {confirmReset ? "Confirmar Reset?" : "Resetar Demo"}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </header>

@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ArrowRight,
+  CheckCircle2,
   Gamepad2,
   GraduationCap,
   KeyRound,
+  Lock,
   LogIn,
   ShieldCheck,
   Sparkles,
@@ -16,16 +18,55 @@ import { useLoloverse } from "@/context/LoloverseContext";
 import { Account, Persona } from "@/types";
 import { SketchAvatar } from "@/components/shared/SketchAvatar";
 
-export function AuthScreen() {
-  const { state, login, registerAccount } = useLoloverse();
-  const [mode, setMode] = useState<"login" | "register">("login");
+function GoogleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+      <path
+        fill="#4285F4"
+        d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.8z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.2 0-5.9-2.1-6.8-5H1.2v3.1C3.2 21.4 7.3 24 12 24z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.2 14.3c-.2-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.2C.4 8.2 0 10 0 12s.4 3.8 1.2 5.4l4-3.1z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4C18 1.2 15.2 0 12 0 7.3 0 3.2 2.6 1.2 6.6l4 3.1c.9-2.9 3.6-4.9 6.8-4.9z"
+      />
+    </svg>
+  );
+}
 
-  // Login form state
+export function AuthScreen() {
+  const {
+    state,
+    isBackendConnected,
+    login,
+    loginWithGoogle,
+    verifyInvite,
+    registerAccount,
+  } = useLoloverse();
+
+  // Produção (PocketBase): 3 abas limpas (Google | Convite | Admin)
+  const [pbTab, setPbTab] = useState<"google" | "invite" | "admin">("google");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteVerified, setInviteVerified] = useState<{
+    role: string;
+    className?: string;
+  } | null>(null);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Modo demonstração local (apenas quando NEXT_PUBLIC_POCKETBASE_URL não está definido)
+  const [demoMode, setDemoMode] = useState<"login" | "register">("login");
   const [identifier, setIdentifier] = useState("prof.rafael");
   const [password, setPassword] = useState("123");
-  const [error, setError] = useState<string | null>(null);
-
-  // Register form state
   const [regName, setRegName] = useState("");
   const [regUsername, setRegUsername] = useState("");
   const [regPassword, setRegPassword] = useState("123");
@@ -34,23 +75,72 @@ export function AuthScreen() {
     state.classes[0]?.id || "class-8a"
   );
 
-  // Featured test accounts for quick demonstration
-  const teacherAccounts = state.accounts.filter((a) => a.role === "teacher");
-  const coordAccounts = state.accounts.filter((a) => a.role === "coordinator");
-  const featuredStudents = state.accounts
-    .filter((a) => a.role === "student")
-    .slice(0, 6);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    const res = login(identifier, password);
-    if (!res.ok && res.error) {
-      setError(res.error);
+  // Lê link direto de convite (?convite=LOLO-...&email=...) automaticamente
+  useEffect(() => {
+    if (!isBackendConnected || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const qCode = params.get("convite") || params.get("code");
+    const qEmail = params.get("email");
+    if (qCode) {
+      setInviteCode(qCode.trim().toUpperCase());
+      setPbTab("invite");
     }
+    if (qEmail) {
+      setInviteEmail(qEmail.trim().toLowerCase());
+    }
+  }, [isBackendConnected]);
+
+  // --- Handlers Produção (PocketBase) ---
+  const handleGoogleLogin = async () => {
+    setError(null);
+    setBusy(true);
+    const res = await loginWithGoogle();
+    setBusy(false);
+    if (!res.ok && res.error) setError(res.error);
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleVerifyInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setInviteVerified(null);
+    setBusy(true);
+    const res = await verifyInvite(inviteEmail, inviteCode);
+    setBusy(false);
+    if (!res.valid) {
+      setError(res.error || "Código de convite inválido.");
+      return;
+    }
+    setInviteVerified({ role: res.role || "student", className: res.className });
+  };
+
+  const handleGoogleWithInvite = async () => {
+    setError(null);
+    setBusy(true);
+    const res = await loginWithGoogle(inviteCode.trim().toUpperCase());
+    setBusy(false);
+    if (!res.ok && res.error) setError(res.error);
+  };
+
+  const handleAdminSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    const res = await login(adminEmail, adminPassword);
+    setBusy(false);
+    if (!res.ok && res.error) setError(res.error);
+  };
+
+  // --- Handlers Demo Local ---
+  const handleDemoLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const res = await login(identifier, password);
+    if (!res.ok && res.error) setError(res.error);
+  };
+
+  const handleDemoRegister = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     const res = registerAccount({
@@ -60,18 +150,16 @@ export function AuthScreen() {
       role: regRole,
       classId: regClassId,
     });
-    if (!res.ok && res.error) {
-      setError(res.error);
-    }
+    if (!res.ok && res.error) setError(res.error);
   };
 
-  const fillAccount = (acc: Account, autoLogin = false) => {
-    setMode("login");
+  const fillAccount = async (acc: Account, autoLogin = false) => {
+    setDemoMode("login");
     setError(null);
     setIdentifier(acc.username);
     setPassword(acc.password);
     if (autoLogin) {
-      login(acc.username, acc.password);
+      await login(acc.username, acc.password);
     }
   };
 
@@ -82,9 +170,9 @@ export function AuthScreen() {
         cls: "bg-[#FACC15] text-zinc-950",
         icon: <GraduationCap className="w-3 h-3" />,
       };
-    if (role === "coordinator")
+    if (role === "coordinator" || role === "admin")
       return {
-        label: "Coordenador",
+        label: role === "admin" ? "Admin" : "Coordenador",
         cls: "bg-[#8B5CF6] text-white",
         icon: <ShieldCheck className="w-3 h-3" />,
       };
@@ -95,16 +183,22 @@ export function AuthScreen() {
     };
   };
 
-  return (
-    <div className="min-h-screen flex flex-col justify-center py-8 px-4 sm:px-6">
-      <div className="max-w-6xl w-full mx-auto space-y-6">
-        {/* Top Brand Banner */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-[#FACC15] border-2 border-zinc-900 shadow-[4px_4px_0px_0px_rgba(24,24,27,1)] flex items-center justify-center">
+  // ===========================================================================
+  // TELA DE PRODUÇÃO (PocketBase + Google OAuth2 + Convite 1-para-1 + Admin)
+  // ===========================================================================
+  if (isBackendConnected) {
+    const rolePt = (r: string) =>
+      r === "teacher" ? "Professor" : r === "coordinator" ? "Coordenador" : "Aluno";
+
+    return (
+      <div className="min-h-screen flex flex-col justify-center items-center py-8 px-4 sm:px-6">
+        <div className="w-full max-w-lg space-y-5">
+          {/* Logo Caderno Vivo */}
+          <div className="flex flex-col items-center text-center gap-2">
+            <div className="w-14 h-14 rounded-2xl bg-[#FACC15] border-2 border-zinc-900 shadow-[4px_4px_0px_0px_rgba(24,24,27,1)] flex items-center justify-center">
               <svg
                 viewBox="0 0 36 36"
-                className="w-8 h-8"
+                className="w-9 h-9"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
                 aria-hidden="true"
@@ -134,42 +228,289 @@ export function AuthScreen() {
               </svg>
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-hand text-4xl leading-none text-zinc-900">
-                  Loloverse
-                </h1>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider bg-zinc-900 text-[#FACC15] rounded-md">
-                  <Sparkles className="w-3 h-3" /> Contas Reais de Teste
-                </span>
+              <h1 className="font-hand text-5xl leading-none text-zinc-900">
+                Loloverse
+              </h1>
+              <p className="text-xs sm:text-sm font-semibold text-zinc-600 mt-1">
+                Acesso Escolar Seguro · Gestão, Missões & Espaço Híbrido
+              </p>
+            </div>
+          </div>
+
+          {/* Card de Autenticação */}
+          <div className="sketch-card p-6 bg-white space-y-5">
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPbTab("google");
+                  setError(null);
+                }}
+                className={`sketch-btn py-2 text-xs ${
+                  pbTab === "google"
+                    ? "bg-[#FACC15] text-zinc-950"
+                    : "bg-white text-zinc-700 hover:bg-amber-50"
+                }`}
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                Entrar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPbTab("invite");
+                  setError(null);
+                }}
+                className={`sketch-btn py-2 text-xs ${
+                  pbTab === "invite"
+                    ? "bg-[#10B981] text-zinc-950"
+                    : "bg-white text-zinc-700 hover:bg-emerald-50"
+                }`}
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                Convite
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPbTab("admin");
+                  setError(null);
+                }}
+                className={`sketch-btn py-2 text-xs ${
+                  pbTab === "admin"
+                    ? "bg-zinc-900 text-[#FACC15]"
+                    : "bg-white text-zinc-700 hover:bg-zinc-100"
+                }`}
+              >
+                <Lock className="w-3.5 h-3.5" />
+                Admin
+              </button>
+            </div>
+
+            {error && (
+              <div className="p-3 rounded-xl bg-rose-100 border-2 border-zinc-900 text-xs font-bold text-rose-950">
+                {error}
               </div>
+            )}
+
+            {pbTab === "google" && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
+                    Entrar com sua conta Google
+                  </h2>
+                  <p className="text-xs text-zinc-600 mt-1">
+                    Para alunos, professores e coordenadores que já ativaram o convite escolar.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleGoogleLogin}
+                  className="sketch-btn w-full py-3.5 bg-white hover:bg-amber-50 text-zinc-950 text-sm disabled:opacity-50"
+                >
+                  <GoogleIcon />
+                  {busy ? "Conectando..." : "Continuar com Google"}
+                </button>
+
+                <p className="text-[11px] text-center text-zinc-500 font-medium">
+                  Primeiro acesso? Clique na aba{" "}
+                  <button
+                    type="button"
+                    onClick={() => setPbTab("invite")}
+                    className="font-extrabold text-zinc-900 underline"
+                  >
+                    Convite
+                  </button>{" "}
+                  e informe o código enviado pela coordenação.
+                </p>
+              </div>
+            )}
+
+            {pbTab === "invite" && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
+                    Primeiro Acesso com Convite
+                  </h2>
+                  <p className="text-xs text-zinc-600 mt-1">
+                    Informe seu e-mail Google e o código exclusivo recebido da escola.
+                  </p>
+                </div>
+
+                <form onSubmit={handleVerifyInvite} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                      Seu E-mail Google
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={inviteEmail}
+                      onChange={(e) => {
+                        setInviteEmail(e.target.value);
+                        setInviteVerified(null);
+                      }}
+                      placeholder="nome@gmail.com"
+                      className="sketch-input"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                      Código de Convite
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={inviteCode}
+                      onChange={(e) => {
+                        setInviteCode(e.target.value.toUpperCase());
+                        setInviteVerified(null);
+                      }}
+                      placeholder="Ex: LOLO-7K3M-9P2Q"
+                      className="sketch-input font-mono uppercase tracking-wider font-bold"
+                    />
+                  </div>
+
+                  {!inviteVerified ? (
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      className="sketch-btn w-full py-3 bg-[#3B82F6] text-white text-sm disabled:opacity-50"
+                    >
+                      {busy ? "Verificando..." : "Validar Convite"}
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="p-3 rounded-xl bg-emerald-100 border-2 border-zinc-900 text-xs font-bold text-emerald-950 flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                        <div>
+                          Convite válido! Cargo:{" "}
+                          <strong>{rolePt(inviteVerified.role)}</strong>
+                          {inviteVerified.className
+                            ? ` · Turma: ${inviteVerified.className}`
+                            : ""}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={handleGoogleWithInvite}
+                        className="sketch-btn w-full py-3.5 bg-[#10B981] text-zinc-950 text-sm disabled:opacity-50"
+                      >
+                        <GoogleIcon />
+                        {busy
+                          ? "Concluindo cadastro..."
+                          : "Concluir Cadastro com Google"}
+                      </button>
+                    </div>
+                  )}
+                </form>
+              </div>
+            )}
+
+            {pbTab === "admin" && (
+              <form onSubmit={handleAdminSubmit} className="space-y-4">
+                <div>
+                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
+                    Acesso Administrativo
+                  </h2>
+                  <p className="text-xs text-zinc-600 mt-1">
+                    Exclusivo para conta Admin ou e-mails institucionais autorizados fora do Google.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                      E-mail ou Usuário
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      placeholder="admin@seudominio.com.br"
+                      className="sketch-input"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                      Senha
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      placeholder="Sua senha forte"
+                      className="sketch-input"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="sketch-btn w-full py-3 bg-zinc-900 text-[#FACC15] text-sm disabled:opacity-50"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  {busy ? "Entrando..." : "Entrar como Admin"}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ===========================================================================
+  // MODO DEMONSTRAÇÃO LOCAL (fallback apenas sem NEXT_PUBLIC_POCKETBASE_URL)
+  // ===========================================================================
+  const teacherAccounts = state.accounts.filter((a) => a.role === "teacher");
+  const coordAccounts = state.accounts.filter((a) => a.role === "coordinator");
+  const featuredStudents = state.accounts
+    .filter((a) => a.role === "student")
+    .slice(0, 6);
+
+  return (
+    <div className="min-h-screen flex flex-col justify-center py-8 px-4 sm:px-6">
+      <div className="max-w-6xl w-full mx-auto space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#FACC15] border-2 border-zinc-900 shadow-[4px_4px_0px_0px_rgba(24,24,27,1)] flex items-center justify-center">
+              <Sparkles className="w-6 h-6 text-zinc-900" />
+            </div>
+            <div>
+              <h1 className="font-hand text-4xl leading-none text-zinc-900">
+                Loloverse (Demo Local)
+              </h1>
               <p className="text-xs sm:text-sm font-semibold text-zinc-600">
                 Gestão Escolar + Pulso da Turma + Missões RPG + Espaço Híbrido
               </p>
             </div>
           </div>
-
-          <div className="sketch-card-sm px-3.5 py-2 bg-violet-100 text-xs font-semibold text-violet-950 max-w-md">
-            <strong>Dica Multi-Aba:</strong> Abra 2 abas do navegador (ex: uma logada como{" "}
-            <code className="font-mono font-bold">prof.rafael</code> e outra como{" "}
-            <code className="font-mono font-bold">sofia</code>) para testar pontos, quests e o Espaço Híbrido em tempo real!
-          </div>
         </div>
 
-        {/* Main Grid: Login/Register + Test Accounts Directory */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left: Auth Card */}
           <div className="lg:col-span-5 sketch-card p-6 bg-white space-y-5">
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => {
-                  setMode("login");
+                  setDemoMode("login");
                   setError(null);
                 }}
                 className={`sketch-btn py-2.5 text-sm ${
-                  mode === "login"
+                  demoMode === "login"
                     ? "bg-[#FACC15] text-zinc-950"
-                    : "bg-white text-zinc-700 hover:bg-amber-50"
+                    : "bg-white text-zinc-700"
                 }`}
               >
                 <LogIn className="w-4 h-4" />
@@ -178,13 +519,13 @@ export function AuthScreen() {
               <button
                 type="button"
                 onClick={() => {
-                  setMode("register");
+                  setDemoMode("register");
                   setError(null);
                 }}
                 className={`sketch-btn py-2.5 text-sm ${
-                  mode === "register"
+                  demoMode === "register"
                     ? "bg-[#10B981] text-zinc-950"
-                    : "bg-white text-zinc-700 hover:bg-emerald-50"
+                    : "bg-white text-zinc-700"
                 }`}
               >
                 <UserPlus className="w-4 h-4" />
@@ -198,312 +539,142 @@ export function AuthScreen() {
               </div>
             )}
 
-            {mode === "login" ? (
-              <form onSubmit={handleLoginSubmit} className="space-y-4">
-                <div>
-                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
-                    Acesse sua Conta
-                  </h2>
-                  <p className="text-xs text-zinc-600 mt-1">
-                    Use seu usuário ou e-mail escolar com senha simples.
-                  </p>
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <label
-                      htmlFor="login-id"
-                      className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1"
-                    >
-                      Usuário ou E-mail
-                    </label>
-                    <input
-                      id="login-id"
-                      type="text"
-                      required
-                      value={identifier}
-                      onChange={(e) => setIdentifier(e.target.value)}
-                      placeholder="Ex: prof.rafael, sofia ou coord.helena"
-                      className="sketch-input font-semibold"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="login-pass"
-                      className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1"
-                    >
-                      Senha
-                    </label>
-                    <input
-                      id="login-pass"
-                      type="password"
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Senha padrão de teste: 123"
-                      className="sketch-input font-semibold"
-                    />
-                  </div>
-                </div>
-
+            {demoMode === "login" ? (
+              <form onSubmit={handleDemoLogin} className="space-y-4">
+                <input
+                  type="text"
+                  required
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  className="sketch-input font-semibold"
+                />
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="sketch-input font-semibold"
+                />
                 <button
                   type="submit"
                   className="sketch-btn w-full py-3 bg-[#3B82F6] text-white text-sm"
                 >
-                  Entrar no Loloverse
-                  <ArrowRight className="w-4 h-4" />
+                  Entrar <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
             ) : (
-              <form onSubmit={handleRegisterSubmit} className="space-y-4">
-                <div>
-                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
-                    Criar Nova Conta de Teste
-                  </h2>
-                  <p className="text-xs text-zinc-600 mt-1">
-                    Se criar uma conta de <strong>Aluno</strong>, ela já nasce com Ficha RPG Nv.1 e aparece na turma!
-                  </p>
+              <form onSubmit={handleDemoRegister} className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  {(["student", "teacher", "coordinator"] as Persona[]).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setRegRole(r)}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border-2 ${
+                        regRole === r
+                          ? "bg-[#FACC15] border-zinc-900"
+                          : "bg-white border-zinc-300"
+                      }`}
+                    >
+                      {r === "student" ? "Aluno" : r === "teacher" ? "Professor" : "Coord."}
+                    </button>
+                  ))}
                 </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
-                      Perfil de Acesso
-                    </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(["student", "teacher", "coordinator"] as Persona[]).map(
-                        (role) => (
-                          <button
-                            key={role}
-                            type="button"
-                            onClick={() => setRegRole(role)}
-                            className={`py-2 px-2 rounded-xl text-xs font-bold border-2 transition-all ${
-                              regRole === role
-                                ? "bg-[#FACC15] border-zinc-900 shadow-[2px_2px_0px_0px_rgba(24,24,27,1)]"
-                                : "bg-white border-zinc-300 hover:border-zinc-900"
-                            }`}
-                          >
-                            {role === "student"
-                              ? "Aluno"
-                              : role === "teacher"
-                              ? "Professor"
-                              : "Coord."}
-                          </button>
-                        )
-                      )}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
-                      Nome Completo
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
-                      placeholder="Ex: Diogo Ferreira"
-                      className="sketch-input"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
-                        Usuário (Login)
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={regUsername}
-                        onChange={(e) => setRegUsername(e.target.value)}
-                        placeholder="ex: diogo"
-                        className="sketch-input font-mono text-xs"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
-                        Senha Simples
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={regPassword}
-                        onChange={(e) => setRegPassword(e.target.value)}
-                        placeholder="ex: 123"
-                        className="sketch-input font-mono text-xs"
-                      />
-                    </div>
-                  </div>
-
-                  {regRole !== "coordinator" && (
-                    <div>
-                      <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
-                        Turma
-                      </label>
-                      <select
-                        value={regClassId}
-                        onChange={(e) => setRegClassId(e.target.value)}
-                        className="sketch-input font-semibold"
-                      >
-                        {state.classes.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                <input
+                  type="text"
+                  required
+                  value={regName}
+                  onChange={(e) => setRegName(e.target.value)}
+                  placeholder="Nome Completo"
+                  className="sketch-input"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={regUsername}
+                    onChange={(e) => setRegUsername(e.target.value)}
+                    placeholder="usuário"
+                    className="sketch-input font-mono text-xs"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="senha"
+                    className="sketch-input font-mono text-xs"
+                  />
                 </div>
-
+                {regRole !== "coordinator" && (
+                  <select
+                    value={regClassId}
+                    onChange={(e) => setRegClassId(e.target.value)}
+                    className="sketch-input font-semibold"
+                  >
+                    {state.classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <button
                   type="submit"
                   className="sketch-btn w-full py-3 bg-[#10B981] text-zinc-950 text-sm"
                 >
-                  <UserPlus className="w-4 h-4" />
-                  Criar Conta & Entrar Agora
+                  Criar Conta & Entrar
                 </button>
               </form>
             )}
           </div>
 
-          {/* Right: Ready-to-Test Accounts Directory */}
           <div className="lg:col-span-7 sketch-card p-5 bg-[#FFFDF7] space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-zinc-900 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-[#8B5CF6] text-white border-2 border-zinc-900">
-                  <KeyRound className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="font-hand text-2xl leading-none text-zinc-900">
-                    Contas Prontas para Teste (Senha: <span className="highlighter-mark px-1">123</span>)
-                  </h2>
-                  <p className="text-xs text-zinc-600">
-                    Clique em <strong>Preencher</strong> ou <strong>Entrar</strong> em qualquer conta abaixo para testar todas as funções
-                  </p>
-                </div>
-              </div>
+            <div className="flex items-center justify-between border-b-2 border-zinc-900 pb-3">
+              <h2 className="font-hand text-2xl text-zinc-900">
+                Contas Demo (Senha: 123)
+              </h2>
               <span className="inline-flex items-center gap-1 text-xs font-extrabold px-2.5 py-1 bg-white border-2 border-zinc-900 rounded-lg">
                 <Users className="w-3.5 h-3.5" />
                 {state.accounts.length} contas
               </span>
             </div>
-
-            {/* Staff Accounts */}
-            <div className="space-y-2">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">
-                Equipe Pedagógica (Docentes & Coordenação)
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {[...teacherAccounts, ...coordAccounts].map((acc) => {
-                  const badge = roleBadge(acc.role);
-                  return (
-                    <div
-                      key={acc.id}
-                      className="p-3 rounded-xl bg-white border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(24,24,27,1)] flex items-center justify-between gap-2"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <SketchAvatar
-                          seed={acc.avatarSeed}
-                          bgColor={acc.avatarColor}
-                          size="sm"
-                        />
-                        <div className="min-w-0">
-                          <p className="font-bold text-xs text-zinc-900 truncate">
-                            {acc.displayName}
-                          </p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span
-                              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-extrabold rounded border border-zinc-900 ${badge.cls}`}
-                            >
-                              {badge.icon}
-                              {badge.label}
-                            </span>
-                            <code className="text-[11px] font-mono font-bold text-zinc-700">
-                              {acc.username} / {acc.password}
-                            </code>
-                          </div>
-                        </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {[...teacherAccounts, ...coordAccounts, ...featuredStudents].map((acc) => {
+                const badge = roleBadge(acc.role);
+                return (
+                  <div
+                    key={acc.id}
+                    className="p-3 rounded-xl bg-white border-2 border-zinc-900 flex items-center justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <SketchAvatar
+                        seed={acc.avatarSeed}
+                        bgColor={acc.avatarColor}
+                        size="sm"
+                      />
+                      <div className="min-w-0">
+                        <p className="font-bold text-xs text-zinc-900 truncate">
+                          {acc.displayName}
+                        </p>
+                        <span
+                          className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-extrabold rounded border border-zinc-900 ${badge.cls}`}
+                        >
+                          {badge.icon}
+                          {badge.label}
+                        </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => fillAccount(acc, true)}
-                        className="sketch-btn-sm px-2.5 py-1.5 bg-[#FAF8F5] hover:bg-[#FACC15] text-[11px] shrink-0"
-                      >
-                        Entrar
-                      </button>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Student Accounts */}
-            <div className="space-y-2">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">
-                Contas de Estudantes (8º Ano A · Destaque e Atenção)
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {featuredStudents.map((acc) => {
-                  const stu = state.students.find((s) => s.id === acc.studentId);
-                  const isAlert = stu && stu.hp <= 55;
-                  return (
-                    <div
-                      key={acc.id}
-                      className={`p-3 rounded-xl border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(24,24,27,1)] flex items-center justify-between gap-2 ${
-                        isAlert ? "bg-rose-50" : "bg-white"
-                      }`}
+                    <button
+                      type="button"
+                      onClick={() => fillAccount(acc, true)}
+                      className="sketch-btn-sm px-2.5 py-1.5 bg-[#FAF8F5] text-[11px]"
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <SketchAvatar
-                          seed={acc.avatarSeed}
-                          bgColor={acc.avatarColor}
-                          size="sm"
-                        />
-                        <div className="min-w-0">
-                          <p className="font-bold text-xs text-zinc-900 truncate">
-                            {acc.displayName}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                            <code className="text-[11px] font-mono font-bold text-zinc-700">
-                              {acc.username} / {acc.password}
-                            </code>
-                            {stu && (
-                              <span
-                                className={`text-[10px] font-extrabold px-1.5 py-0.2 rounded border border-zinc-900 ${
-                                  isAlert
-                                    ? "bg-[#F43F5E] text-white"
-                                    : "bg-emerald-100 text-emerald-950"
-                                }`}
-                              >
-                                Nv.{stu.level} · HP {stu.hp}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => fillAccount(acc, true)}
-                        className="sketch-btn-sm px-2.5 py-1.5 bg-[#10B981] text-zinc-950 text-[11px] shrink-0"
-                      >
-                        Entrar
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-[11px] text-zinc-500 font-medium">
-                Todos os demais alunos cadastrados (ex:{" "}
-                <code className="font-mono">enzo</code>,{" "}
-                <code className="font-mono">lara</code>,{" "}
-                <code className="font-mono">cauane</code>,{" "}
-                <code className="font-mono">davi</code>,{" "}
-                <code className="font-mono">isabela</code>) também funcionam com o primeiro nome + senha{" "}
-                <code className="font-mono font-bold">123</code>.
-              </p>
+                      Entrar
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

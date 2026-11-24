@@ -11,13 +11,32 @@ import React, {
 } from "react";
 import { INITIAL_STATE } from "@/data/mockData";
 import {
+  extractPbError,
+  getPocketBase,
+  isPocketBaseEnabled,
+  mapCategory,
+  mapChannel,
+  mapClass,
+  mapInvite,
+  mapLog,
+  mapMessage,
+  mapQuest,
+  mapRedemption,
+  mapReward,
+  mapStudent,
+  mapStudyRoom,
+  mapTopic,
+  mapUserToAccount,
+} from "@/lib/pocketbase";
+import {
   Account,
   ActivityLog,
   AttendanceStatus,
   BehaviorPreset,
   ChannelTopic,
-  LoloverseState,
   EngagementPillar,
+  InviteRecord,
+  LoloverseState,
   Persona,
   Quest,
   QuestType,
@@ -29,6 +48,23 @@ import {
 
 const STORAGE_KEY = "loloverse_mvp_state_v4";
 const SESSION_KEY = "loloverse_session_account_id_v4";
+
+const EMPTY_STATE: LoloverseState = {
+  accounts: [],
+  studyRooms: [],
+  categories: [],
+  channels: [],
+  topics: [],
+  classes: [],
+  students: [],
+  quests: [],
+  rewards: [],
+  redemptions: [],
+  messages: [],
+  logs: [],
+  selectedClassId: "",
+  activeStudentId: "",
+};
 
 const AVATAR_PALETTE = [
   "#FACC15",
@@ -45,6 +81,21 @@ interface LoginResult {
   error?: string;
 }
 
+interface InviteVerifyResult {
+  valid: boolean;
+  role?: string;
+  className?: string;
+  error?: string;
+}
+
+interface GenerateInviteItem {
+  email: string;
+  role: "student" | "teacher" | "coordinator";
+  classId?: string;
+  expiresInDays?: number;
+  note?: string;
+}
+
 interface RegisterInput {
   displayName: string;
   username: string;
@@ -55,9 +106,16 @@ interface RegisterInput {
 
 interface LoloverseContextValue {
   state: LoloverseState;
+  invites: InviteRecord[];
+  isBackendConnected: boolean;
   currentAccount: Account | null;
   persona: Persona;
-  login: (identifier: string, password: string) => LoginResult;
+  login: (identifier: string, password: string) => Promise<LoginResult>;
+  loginWithGoogle: (inviteCode?: string) => Promise<LoginResult>;
+  verifyInvite: (email: string, code: string) => Promise<InviteVerifyResult>;
+  generateInvites: (items: GenerateInviteItem[]) => Promise<InviteRecord[]>;
+  revokeInvite: (inviteId: string) => Promise<void>;
+  refreshData: () => Promise<void>;
   registerAccount: (input: RegisterInput) => LoginResult;
   logout: () => void;
   setSelectedClassId: (classId: string) => void;
@@ -77,7 +135,6 @@ interface LoloverseContextValue {
   toggleQuestActive: (questId: string) => void;
   completeQuestAsStudent: (questId: string, studentId: string) => void;
   redeemReward: (rewardId: string, studentId: string) => void;
-  // Espaço Híbrido (Categorias, Canais, Tópicos, Mensagens & Mesas)
   createCategory: (name: string, color: string) => void;
   createChannel: (
     categoryId: string,
@@ -116,7 +173,6 @@ interface LoloverseContextValue {
     onlineStatus: Student["onlineStatus"],
     studyActivity: string
   ) => void;
-  // Coordenação
   toggleRewardApproval: (rewardId: string) => void;
   updateRewardCost: (rewardId: string, newCost: number) => void;
   createReward: (input: {
@@ -161,18 +217,27 @@ function toSlug(text: string): string {
 }
 
 export function LoloverseProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<LoloverseState>(INITIAL_STATE);
+  const [state, setState] = useState<LoloverseState>(
+    isPocketBaseEnabled ? EMPTY_STATE : INITIAL_STATE
+  );
   const stateRef = useRef<LoloverseState>(state);
   stateRef.current = state;
 
+  const [invites, setInvites] = useState<InviteRecord[]>([]);
   const [currentAccountId, setCurrentAccountId] = useState<string | null>(null);
+  const [pbSelfAccount, setPbSelfAccount] = useState<Account | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
-  const currentAccount = useMemo(
-    () => state.accounts.find((a) => a.id === currentAccountId) || null,
-    [state.accounts, currentAccountId]
-  );
+  const currentAccount = useMemo(() => {
+    if (isPocketBaseEnabled) {
+      if (!currentAccountId) return null;
+      return (
+        state.accounts.find((a) => a.id === currentAccountId) || pbSelfAccount
+      );
+    }
+    return state.accounts.find((a) => a.id === currentAccountId) || null;
+  }, [state.accounts, currentAccountId, pbSelfAccount]);
 
   const currentAccountRef = useRef<Account | null>(currentAccount);
   currentAccountRef.current = currentAccount;
@@ -201,8 +266,151 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Hydrate shared DB from localStorage + per-tab session from sessionStorage
+  // ===========================================================================
+  // POCKETBASE: CARREGAMENTO COMPLETO & SINCRONIZAÇÃO REALTIME
+  // ===========================================================================
+  const loadFromPocketBase = useCallback(async () => {
+    const pb = getPocketBase();
+    if (!pb || !pb.authStore.isValid || !pb.authStore.record) return;
+
+    const authRec = pb.authStore.record;
+    const role = (authRec.role || "student") as Persona;
+    const isStaff = role === "teacher" || role === "coordinator" || role === "admin";
+    const isCoordOrAdmin = role === "coordinator" || role === "admin";
+
+    const safeFullList = async (col: string, opts?: Record<string, unknown>) => {
+      try {
+        return await pb.collection(col).getFullList(opts);
+      } catch {
+        return [];
+      }
+    };
+
+    const [
+      classRecs,
+      studentRecs,
+      userRecs,
+      questRecs,
+      completionRecs,
+      rewardRecs,
+      redemptionRecs,
+      roomRecs,
+      categoryRecs,
+      channelRecs,
+      topicRecs,
+      messageRecs,
+      logRecs,
+      inviteRecs,
+    ] = await Promise.all([
+      safeFullList("classes", { sort: "name" }),
+      safeFullList("students", { sort: "name" }),
+      safeFullList("users", { sort: "displayName" }),
+      safeFullList("quests", { sort: "-created" }),
+      safeFullList("quest_completions"),
+      safeFullList("shop_rewards", { sort: "cost" }),
+      safeFullList("redemptions", { sort: "-created" }),
+      safeFullList("study_rooms", { sort: "name" }),
+      safeFullList("channel_categories", { sort: "sortOrder,name" }),
+      safeFullList("chat_channels", { sort: "title" }),
+      safeFullList("channel_topics", { sort: "-pinned,-created" }),
+      safeFullList("chat_messages", { sort: "created" }),
+      isStaff
+        ? safeFullList("activity_logs", { sort: "-created", batch: 50 })
+        : Promise.resolve([]),
+      isCoordOrAdmin
+        ? safeFullList("invites", { sort: "-created" })
+        : Promise.resolve([]),
+    ]);
+
+    const studentByUserId = new Map<string, string>();
+    for (const s of studentRecs) {
+      if (s.user) studentByUserId.set(String(s.user), s.id);
+    }
+
+    const completionsByQuest = new Map<string, string[]>();
+    for (const c of completionRecs) {
+      const qId = String(c.quest || "");
+      const sId = String(c.student || "");
+      if (!qId || !sId) continue;
+      const arr = completionsByQuest.get(qId) || [];
+      arr.push(sId);
+      completionsByQuest.set(qId, arr);
+    }
+
+    const mappedClasses = classRecs.map(mapClass);
+    const mappedStudents = studentRecs.map(mapStudent);
+    const mappedAccounts = userRecs.map((u) =>
+      mapUserToAccount(u, studentByUserId)
+    );
+    const selfAcc =
+      mappedAccounts.find((a) => a.id === authRec.id) ||
+      mapUserToAccount(authRec, studentByUserId);
+
+    setPbSelfAccount(selfAcc);
+    setCurrentAccountId(selfAcc.id);
+    setInvites(inviteRecs.map(mapInvite));
+
+    setState((prev) => ({
+      accounts: mappedAccounts,
+      classes: mappedClasses,
+      students: mappedStudents,
+      quests: questRecs.map((q) =>
+        mapQuest(q, completionsByQuest.get(q.id) || [])
+      ),
+      rewards: rewardRecs.map(mapReward),
+      redemptions: redemptionRecs.map(mapRedemption),
+      studyRooms: roomRecs.map(mapStudyRoom),
+      categories: categoryRecs.map(mapCategory),
+      channels: channelRecs.map(mapChannel),
+      topics: topicRecs.map(mapTopic),
+      messages: messageRecs.map((m) => mapMessage(m, authRec.id)),
+      logs: logRecs.slice(0, 60).map(mapLog),
+      selectedClassId:
+        prev.selectedClassId &&
+        mappedClasses.some((c) => c.id === prev.selectedClassId)
+          ? prev.selectedClassId
+          : selfAcc.classId || mappedClasses[0]?.id || "",
+      activeStudentId: selfAcc.studentId || mappedStudents[0]?.id || "",
+    }));
+  }, []);
+
+  const refreshData = useCallback(async () => {
+    if (!isPocketBaseEnabled) return;
+    await loadFromPocketBase();
+  }, [loadFromPocketBase]);
+
+  // Hidratação inicial (PocketBase OU Demo Local)
   useEffect(() => {
+    let active = true;
+
+    if (isPocketBaseEnabled) {
+      (async () => {
+        const pb = getPocketBase();
+        if (!pb) {
+          if (active) setHydrated(true);
+          return;
+        }
+        try {
+          if (pb.authStore.isValid) {
+            await pb.collection("users").authRefresh();
+            if (active) await loadFromPocketBase();
+          }
+        } catch {
+          pb.authStore.clear();
+          if (active) {
+            setCurrentAccountId(null);
+            setPbSelfAccount(null);
+          }
+        } finally {
+          if (active) setHydrated(true);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }
+
+    // Modo demonstração local
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -214,10 +422,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
           Array.isArray(parsed.categories) &&
           Array.isArray(parsed.topics)
         ) {
-          setState({
-            ...INITIAL_STATE,
-            ...parsed,
-          });
+          setState({ ...INITIAL_STATE, ...parsed });
         }
       }
       const savedSession = window.sessionStorage.getItem(SESSION_KEY);
@@ -225,24 +430,76 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         setCurrentAccountId(savedSession);
       }
     } catch {
-      // Ignore storage errors
+      // Ignora erros de storage
     } finally {
       setHydrated(true);
     }
-  }, []);
 
-  // Persist shared DB to localStorage
+    return () => {
+      active = false;
+    };
+  }, [loadFromPocketBase]);
+
+  // Assinaturas Realtime SSE no PocketBase (com debounce leve de 300ms)
   useEffect(() => {
-    if (!hydrated) return;
+    if (!isPocketBaseEnabled || !currentAccountId) return;
+    const pb = getPocketBase();
+    if (!pb || !pb.authStore.isValid) return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReload = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        loadFromPocketBase().catch(() => {});
+      }, 300);
+    };
+
+    const collectionsToWatch = [
+      "students",
+      "quests",
+      "quest_completions",
+      "shop_rewards",
+      "redemptions",
+      "study_rooms",
+      "channel_categories",
+      "chat_channels",
+      "channel_topics",
+      "chat_messages",
+    ];
+
+    const role = currentAccountRef.current?.role;
+    if (role === "coordinator" || role === "admin") {
+      collectionsToWatch.push("invites");
+    }
+
+    collectionsToWatch.forEach((col) => {
+      pb.collection(col)
+        .subscribe("*", scheduleReload)
+        .catch(() => {});
+    });
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      collectionsToWatch.forEach((col) => {
+        pb.collection(col)
+          .unsubscribe("*")
+          .catch(() => {});
+      });
+    };
+  }, [currentAccountId, loadFromPocketBase]);
+
+  // Persistência local (somente modo Demo)
+  useEffect(() => {
+    if (isPocketBaseEnabled || !hydrated) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
-      // Ignore quota errors
+      // Ignora erro de quota
     }
   }, [state, hydrated]);
 
-  // Real-time cross-tab synchronization
   useEffect(() => {
+    if (isPocketBaseEnabled) return;
     const onStorage = (event: StorageEvent) => {
       if (event.key !== STORAGE_KEY || !event.newValue) return;
       try {
@@ -253,13 +510,10 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
           Array.isArray(parsed.accounts) &&
           Array.isArray(parsed.topics)
         ) {
-          setState({
-            ...INITIAL_STATE,
-            ...parsed,
-          });
+          setState({ ...INITIAL_STATE, ...parsed });
         }
       } catch {
-        // Ignore malformed external updates
+        // Ignora atualização malformada
       }
     };
     window.addEventListener("storage", onStorage);
@@ -268,6 +522,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
 
   const persistSession = useCallback((accountId: string | null) => {
     setCurrentAccountId(accountId);
+    if (isPocketBaseEnabled) return;
     try {
       if (accountId) {
         window.sessionStorage.setItem(SESSION_KEY, accountId);
@@ -275,105 +530,207 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         window.sessionStorage.removeItem(SESSION_KEY);
       }
     } catch {
-      // Ignore storage errors
+      // Ignora erro de storage
     }
   }, []);
 
+  // ===========================================================================
+  // AUTENTICAÇÃO (Google OAuth2 + Convites + Admin Senha)
+  // ===========================================================================
+  const verifyInvite = useCallback(
+    async (email: string, code: string): Promise<InviteVerifyResult> => {
+      const pb = getPocketBase();
+      if (!pb) return { valid: false, error: "Backend não conectado." };
+      try {
+        const res = await pb.send<InviteVerifyResult>(
+          "/api/loloverse/invites/verify",
+          {
+            method: "POST",
+            body: {
+              email: email.trim().toLowerCase(),
+              code: code.trim().toUpperCase(),
+            },
+          }
+        );
+        return res;
+      } catch (err) {
+        return {
+          valid: false,
+          error: extractPbError(err, "Não foi possível validar o convite."),
+        };
+      }
+    },
+    []
+  );
+
+  const loginWithGoogle = useCallback(
+    async (inviteCode?: string): Promise<LoginResult> => {
+      const pb = getPocketBase();
+      if (!pb) {
+        return { ok: false, error: "Backend PocketBase não configurado." };
+      }
+      try {
+        const cleanCode = inviteCode ? inviteCode.trim().toUpperCase() : "";
+        await pb.collection("users").authWithOAuth2({
+          provider: "google",
+          createData: cleanCode ? { inviteCode: cleanCode } : undefined,
+        });
+        await loadFromPocketBase();
+        const name = pb.authStore.record?.displayName || "Bem-vindo(a)";
+        pushToast(`Bem-vindo(a), ${name}!`, "Sessão Google ativa.", "success");
+        return { ok: true };
+      } catch (err) {
+        pb.authStore.clear();
+        return {
+          ok: false,
+          error: extractPbError(
+            err,
+            "Não foi possível entrar com o Google. Verifique seu código de convite."
+          ),
+        };
+      }
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
   const login = useCallback(
-    (identifier: string, password: string): LoginResult => {
-      const cleanId = identifier.trim().toLowerCase();
+    async (identifier: string, password: string): Promise<LoginResult> => {
+      const cleanId = identifier.trim();
       const cleanPass = password.trim();
       if (!cleanId || !cleanPass) {
-        return { ok: false, error: "Informe usuário/e-mail e senha." };
+        return { ok: false, error: "Informe e-mail/usuário e senha." };
       }
 
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return { ok: false, error: "Backend indisponível." };
+        try {
+          await pb.collection("users").authWithPassword(cleanId, cleanPass);
+          await loadFromPocketBase();
+          const name = pb.authStore.record?.displayName || cleanId;
+          pushToast(
+            `Bem-vindo(a), ${name}!`,
+            "Sessão administrativa autenticada.",
+            "success"
+          );
+          return { ok: true };
+        } catch (err) {
+          return {
+            ok: false,
+            error: extractPbError(
+              err,
+              "Credenciais inválidas ou conta exclusiva Google."
+            ),
+          };
+        }
+      }
+
+      // Modo demo local
+      const lowerId = cleanId.toLowerCase();
       const found = stateRef.current.accounts.find(
         (acc) =>
-          (acc.username.toLowerCase() === cleanId ||
-            acc.email.toLowerCase() === cleanId) &&
+          (acc.username.toLowerCase() === lowerId ||
+            acc.email.toLowerCase() === lowerId) &&
           acc.password === cleanPass
       );
-
       if (!found) {
         return {
           ok: false,
-          error:
-            "Usuário ou senha incorretos. Dica: nas contas de teste a senha padrão é 123.",
+          error: "Usuário ou senha incorretos. Nas contas demo a senha é 123.",
         };
       }
 
       persistSession(found.id);
-
       setState((prev) => ({
         ...prev,
         selectedClassId: found.classId || prev.selectedClassId,
         activeStudentId: found.studentId || prev.activeStudentId,
-        students: found.studentId
-          ? prev.students.map((s) =>
-              s.id === found.studentId && s.onlineStatus === "offline"
-                ? {
-                    ...s,
-                    onlineStatus: "online",
-                    studyActivity: "Acabou de entrar no Loloverse",
-                  }
-                : s
-            )
-          : prev.students,
       }));
-
-      pushToast(
-        `Bem-vindo(a), ${found.displayName}!`,
-        `Sessão iniciada como @${found.username}`,
-        "success"
-      );
-
+      pushToast(`Bem-vindo(a), ${found.displayName}!`, `@${found.username}`, "success");
       return { ok: true };
     },
-    [persistSession, pushToast]
+    [loadFromPocketBase, persistSession, pushToast]
+  );
+
+  const generateInvites = useCallback(
+    async (items: GenerateInviteItem[]): Promise<InviteRecord[]> => {
+      const pb = getPocketBase();
+      if (!pb) return [];
+      const createdAll: InviteRecord[] = [];
+      try {
+        // Fatia automaticamente em blocos de 100 para proteger a VM 1GB
+        for (let i = 0; i < items.length; i += 100) {
+          const chunk = items.slice(i, i + 100);
+          const res = await pb.send<{ created: InviteRecord[] }>(
+            "/api/loloverse/invites/generate",
+            {
+              method: "POST",
+              body: { invites: chunk },
+            }
+          );
+          if (Array.isArray(res.created)) {
+            createdAll.push(...res.created);
+          }
+        }
+        await loadFromPocketBase();
+        pushToast(
+          `${createdAll.length} convite(s) gerado(s)!`,
+          "Copie os links ou baixe o CSV.",
+          "success"
+        );
+        return createdAll;
+      } catch (err) {
+        pushToast(
+          "Erro ao gerar convites",
+          extractPbError(err, "Verifique os dados informados."),
+          "danger"
+        );
+        return [];
+      }
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const revokeInvite = useCallback(
+    async (inviteId: string) => {
+      const pb = getPocketBase();
+      if (!pb) return;
+      try {
+        await pb.collection("invites").update(inviteId, { active: false });
+        await loadFromPocketBase();
+        pushToast("Convite revogado", "O código não poderá mais ser usado.", "warning");
+      } catch (err) {
+        pushToast("Erro ao revogar", extractPbError(err, "Tente novamente."), "danger");
+      }
+    },
+    [loadFromPocketBase, pushToast]
   );
 
   const registerAccount = useCallback(
     (input: RegisterInput): LoginResult => {
+      if (isPocketBaseEnabled) {
+        return {
+          ok: false,
+          error: "Use a aba Convite para concluir seu cadastro via Google.",
+        };
+      }
       const displayName = input.displayName.trim();
       const username = input.username
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9._-]/g, "");
       const password = input.password.trim();
-
-      if (displayName.length < 2) {
-        return { ok: false, error: "Informe seu nome completo." };
-      }
-      if (username.length < 3) {
-        return {
-          ok: false,
-          error: "O usuário precisa ter pelo menos 3 caracteres (letras/números).",
-        };
-      }
-      if (password.length < 3) {
-        return {
-          ok: false,
-          error: "Escolha uma senha com pelo menos 3 caracteres.",
-        };
-      }
-
-      const exists = stateRef.current.accounts.some(
-        (a) => a.username.toLowerCase() === username
-      );
-      if (exists) {
-        return {
-          ok: false,
-          error: `O usuário "@${username}" já existe. Escolha outro.`,
-        };
+      if (displayName.length < 2) return { ok: false, error: "Informe seu nome." };
+      if (username.length < 3) return { ok: false, error: "Usuário mínimo 3 caracteres." };
+      if (password.length < 3) return { ok: false, error: "Senha mínima 3 caracteres." };
+      if (stateRef.current.accounts.some((a) => a.username.toLowerCase() === username)) {
+        return { ok: false, error: `Usuário "@${username}" já existe.` };
       }
 
       const seed = stateRef.current.accounts.length + 3;
       const color = AVATAR_PALETTE[seed % AVATAR_PALETTE.length];
-      const chosenClassId =
-        input.classId || stateRef.current.classes[0]?.id || "class-8a";
-
-      const newStudentId =
-        input.role === "student" ? uid("stu") : undefined;
+      const chosenClassId = input.classId || stateRef.current.classes[0]?.id || "class-8a";
+      const newStudentId = input.role === "student" ? uid("stu") : undefined;
 
       const newAccount: Account = {
         id: uid("acc"),
@@ -386,14 +743,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         avatarColor: color,
         studentId: newStudentId,
         classId: input.role === "coordinator" ? undefined : chosenClassId,
-        bio:
-          input.role === "student"
-            ? "Aventureiro(a) Maker"
-            : input.role === "teacher"
-            ? "Docente Loloverse"
-            : "Coordenação Pedagógica",
       };
-
       const newStudent: Student | null =
         input.role === "student" && newStudentId
           ? {
@@ -417,32 +767,11 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
               streakDays: 1,
               onlineStatus: "online",
               studyActivity: "Explorando o Loloverse!",
-              pillars: {
-                proposito: 60,
-                maestria: 60,
-                criatividade: 65,
-                social: 60,
-              },
+              pillars: { proposito: 60, maestria: 60, criatividade: 65, social: 60 },
               badges: ["Novo no Loloverse"],
               interventionsCount: 0,
             }
           : null;
-
-      const newLog: ActivityLog = {
-        id: uid("log"),
-        timestamp: nowLabel(),
-        actor: displayName,
-        target: `@${username}`,
-        action: `Criou nova conta (${
-          input.role === "student"
-            ? "Aluno"
-            : input.role === "teacher"
-            ? "Professor"
-            : "Coordenador"
-        })`,
-        category: "conta",
-        deltaSummary: newStudent ? "Ficha RPG Nv.1" : "Acesso liberado",
-      };
 
       setState((prev) => ({
         ...prev,
@@ -450,23 +779,28 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         students: newStudent ? [...prev.students, newStudent] : prev.students,
         selectedClassId: newAccount.classId || prev.selectedClassId,
         activeStudentId: newStudentId || prev.activeStudentId,
-        logs: [newLog, ...prev.logs].slice(0, 40),
       }));
-
       persistSession(newAccount.id);
-
-      pushToast(
-        "Conta criada com sucesso!",
-        `Você entrou como ${displayName} (@${username}).`,
-        "success"
-      );
-
       return { ok: true };
     },
-    [persistSession, pushToast]
+    [persistSession]
   );
 
   const logout = useCallback(() => {
+    if (isPocketBaseEnabled) {
+      const pb = getPocketBase();
+      if (pb) {
+        pb.send("/api/loloverse/study-rooms/leave", { method: "POST" }).catch(() => {});
+        pb.authStore.clear();
+      }
+      setCurrentAccountId(null);
+      setPbSelfAccount(null);
+      setInvites([]);
+      setState(EMPTY_STATE);
+      pushToast("Sessão encerrada", "Até logo!", "info");
+      return;
+    }
+
     const acc = currentAccountRef.current;
     if (acc) {
       setState((prev) => ({
@@ -478,211 +812,101 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       }));
     }
     persistSession(null);
-    pushToast(
-      "Sessão encerrada",
-      "Escolha ou crie outra conta para testar.",
-      "info"
-    );
+    pushToast("Sessão encerrada", "Volte quando quiser.", "info");
   }, [persistSession, pushToast]);
 
   const setSelectedClassId = useCallback((classId: string) => {
     setState((prev) => ({ ...prev, selectedClassId: classId }));
   }, []);
 
+  // ===========================================================================
+  // AÇÕES PEDAGÓGICAS, RPG & ECONOMIA (Server-Side no PocketBase)
+  // ===========================================================================
   const updateAttendance = useCallback(
     (studentId: string, status: AttendanceStatus) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send("/api/loloverse/attendance", {
+          method: "POST",
+          body: { studentId, status },
+        })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Frequência atualizada", `Status salvo: ${status}.`, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao salvar frequência", extractPbError(err, "Tente novamente."), "danger")
+          );
+        return;
+      }
+
       const target = stateRef.current.students.find((s) => s.id === studentId);
       if (!target) return;
-      const actorName =
-        currentAccountRef.current?.displayName || "Prof. Rafael Andrade";
-
-      setState((prev) => {
-        const students = prev.students.map((s) => {
-          if (s.id !== studentId) return s;
-          let rateDelta = 0;
-          if (s.attendanceToday !== status) {
-            if (status === "presente")
-              rateDelta = s.attendanceToday === "falta" ? 2 : 1;
-            if (status === "falta") rateDelta = -2;
-            if (status === "atraso")
-              rateDelta = s.attendanceToday === "falta" ? 1 : -1;
-          }
-          const nextRate = Math.max(
-            40,
-            Math.min(100, s.attendanceRate + rateDelta)
-          );
-          const nextHp =
-            status === "falta" && s.attendanceToday !== "falta"
-              ? Math.max(10, s.hp - 5)
-              : status === "presente" && s.attendanceToday === "falta"
-              ? Math.min(s.maxHp, s.hp + 5)
-              : s.hp;
-          return {
-            ...s,
-            attendanceToday: status,
-            attendanceRate: nextRate,
-            hp: nextHp,
-          };
-        });
-
-        const statusMap: Record<AttendanceStatus, string> = {
-          presente: "Presente",
-          falta: "Falta",
-          atraso: "Atraso",
-        };
-
-        const newLog: ActivityLog = {
-          id: uid("log"),
-          timestamp: nowLabel(),
-          actor: actorName,
-          target: target.name,
-          action: `Atualizou frequência para ${statusMap[status]}`,
-          category: "frequencia",
-          deltaSummary:
-            status === "falta"
-              ? "-5 HP"
-              : status === "presente"
-              ? "Presença OK"
-              : "Atraso registrado",
-        };
-
-        return {
-          ...prev,
-          students,
-          logs: [newLog, ...prev.logs].slice(0, 40),
-        };
-      });
-
-      const labels: Record<
-        AttendanceStatus,
-        { text: string; variant: ToastItem["variant"] }
-      > = {
-        presente: { text: "Presença confirmada", variant: "success" },
-        atraso: { text: "Atraso registrado", variant: "warning" },
-        falta: { text: "Falta registrada (-5 HP)", variant: "danger" },
-      };
-      pushToast(
-        labels[status].text,
-        `${target.name} atualizado no diário de classe.`,
-        labels[status].variant
-      );
+      setState((prev) => ({
+        ...prev,
+        students: prev.students.map((s) =>
+          s.id === studentId ? { ...s, attendanceToday: status } : s
+        ),
+      }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const applyBehaviorFeedback = useCallback(
     (studentId: string, preset: BehaviorPreset) => {
-      const target = stateRef.current.students.find((s) => s.id === studentId);
-      if (!target) return;
-      const actorName =
-        currentAccountRef.current?.displayName || "Prof. Rafael Andrade";
-
-      let previewXp = target.xp + preset.xpDelta;
-      let previewLevel = target.level;
-      let previewXpToNext = target.xpToNext;
-      let leveledUp = false;
-      while (previewXp >= previewXpToNext) {
-        previewXp -= previewXpToNext;
-        previewLevel += 1;
-        previewXpToNext += 50;
-        leveledUp = true;
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send<{ leveledUp?: boolean; level?: number }>(
+          "/api/loloverse/behavior-feedback",
+          {
+            method: "POST",
+            body: { studentId, presetId: preset.id },
+          }
+        )
+          .then((res) => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(
+              res.leveledUp
+                ? `LEVEL UP! Nível ${res.level}!`
+                : preset.label,
+              "Feedback registrado no banco.",
+              preset.type === "positive" ? "success" : "danger"
+            );
+          })
+          .catch((err) =>
+            pushToast("Erro no Pulso da Turma", extractPbError(err, "Tente novamente."), "danger")
+          );
+        return;
       }
 
-      setState((prev) => {
-        const students = prev.students.map((s) => {
+      const target = stateRef.current.students.find((s) => s.id === studentId);
+      if (!target) return;
+      setState((prev) => ({
+        ...prev,
+        students: prev.students.map((s) => {
           if (s.id !== studentId) return s;
-
           let nextXp = s.xp + preset.xpDelta;
           let nextLevel = s.level;
           let nextXpToNext = s.xpToNext;
-
           while (nextXp >= nextXpToNext) {
             nextXp -= nextXpToNext;
             nextLevel += 1;
             nextXpToNext += 50;
           }
-
-          const nextHp = Math.max(0, Math.min(s.maxHp, s.hp + preset.hpDelta));
-          const nextGold = Math.max(0, s.gold + preset.goldDelta);
-
-          const pillarBoost = preset.type === "positive" ? 3 : -2;
-          const nextPillars = {
-            ...s.pillars,
-            [preset.pillar]: Math.max(
-              10,
-              Math.min(100, s.pillars[preset.pillar] + pillarBoost)
-            ),
-          };
-
           return {
             ...s,
             xp: nextXp,
             level: nextLevel,
             xpToNext: nextXpToNext,
-            hp: nextHp,
-            gold: nextGold,
-            pillars: nextPillars,
+            hp: Math.max(0, Math.min(s.maxHp, s.hp + preset.hpDelta)),
+            gold: Math.max(0, s.gold + preset.goldDelta),
           };
-        });
-
-        const parts: string[] = [];
-        if (preset.xpDelta !== 0)
-          parts.push(`${preset.xpDelta > 0 ? "+" : ""}${preset.xpDelta} XP`);
-        if (preset.goldDelta !== 0)
-          parts.push(
-            `${preset.goldDelta > 0 ? "+" : ""}${preset.goldDelta} Ouro`
-          );
-        if (preset.hpDelta !== 0)
-          parts.push(`${preset.hpDelta > 0 ? "+" : ""}${preset.hpDelta} HP`);
-
-        const newLog: ActivityLog = {
-          id: uid("log"),
-          timestamp: nowLabel(),
-          actor: actorName,
-          target: target.name,
-          action: `${
-            preset.type === "positive" ? "Concedeu" : "Registrou alerta:"
-          } ${preset.label}`,
-          category: "comportamento",
-          deltaSummary: parts.join(" · "),
-        };
-
-        return {
-          ...prev,
-          students,
-          logs: [newLog, ...prev.logs].slice(0, 40),
-        };
-      });
-
-      const deltaText = [
-        preset.xpDelta
-          ? `${preset.xpDelta > 0 ? "+" : ""}${preset.xpDelta} XP`
-          : "",
-        preset.goldDelta
-          ? `${preset.goldDelta > 0 ? "+" : ""}${preset.goldDelta} Ouro`
-          : "",
-        preset.hpDelta
-          ? `${preset.hpDelta > 0 ? "+" : ""}${preset.hpDelta} HP`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
-
-      if (leveledUp) {
-        pushToast(
-          `LEVEL UP! ${target.name} chegou ao Nível ${previewLevel}!`,
-          `${preset.label} (${deltaText})`,
-          "success"
-        );
-      } else {
-        pushToast(
-          `${preset.label} — ${target.name}`,
-          deltaText,
-          preset.type === "positive" ? "success" : "danger"
-        );
-      }
+        }),
+      }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const createQuest = useCallback(
@@ -697,8 +921,34 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       dueDate: string;
       bossTargetPercent?: number;
     }) => {
-      const actorName =
-        currentAccountRef.current?.displayName || "Prof. Rafael Andrade";
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("quests")
+          .create({
+            class: input.classId,
+            title: input.title.trim(),
+            description: input.description.trim(),
+            type: input.type,
+            xpReward: input.xpReward,
+            goldReward: input.goldReward,
+            pillar: input.pillar,
+            dueDate: input.dueDate.trim() || "Esta semana",
+            active: true,
+            bossTargetPercent:
+              input.type === "boss" ? input.bossTargetPercent ?? 85 : undefined,
+            createdBy: pb.authStore.record?.id || "",
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Nova Missão publicada!", input.title, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao criar missão", extractPbError(err, "Tente novamente."), "danger")
+          );
+        return;
+      }
+
       const newQuest: Quest = {
         id: uid("q"),
         classId: input.classId,
@@ -711,35 +961,11 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         dueDate: input.dueDate.trim() || "Esta semana",
         active: true,
         completedBy: [],
-        bossTargetPercent:
-          input.type === "boss" ? input.bossTargetPercent ?? 85 : undefined,
+        bossTargetPercent: input.type === "boss" ? input.bossTargetPercent ?? 85 : undefined,
       };
-
-      setState((prev) => {
-        const cls = prev.classes.find((c) => c.id === input.classId);
-        const newLog: ActivityLog = {
-          id: uid("log"),
-          timestamp: nowLabel(),
-          actor: actorName,
-          target: cls?.name || "Turma",
-          action: `Criou missão "${newQuest.title}"`,
-          category: "quest",
-          deltaSummary: `+${newQuest.xpReward} XP · +${newQuest.goldReward} Ouro`,
-        };
-        return {
-          ...prev,
-          quests: [newQuest, ...prev.quests],
-          logs: [newLog, ...prev.logs].slice(0, 40),
-        };
-      });
-
-      pushToast(
-        "Nova Quest publicada!",
-        `"${input.title}" já está visível para os alunos.`,
-        "success"
-      );
+      setState((prev) => ({ ...prev, quests: [newQuest, ...prev.quests] }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const toggleQuestActive = useCallback(
@@ -748,244 +974,134 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       if (!target) return;
       const nextActive = !target.active;
 
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("quests")
+          .update(questId, { active: nextActive })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(nextActive ? "Missão ativada" : "Missão pausada", target.title, "info");
+          })
+          .catch((err) =>
+            pushToast("Erro ao atualizar missão", extractPbError(err, "Tente novamente."), "danger")
+          );
+        return;
+      }
+
       setState((prev) => ({
         ...prev,
         quests: prev.quests.map((q) =>
           q.id === questId ? { ...q, active: nextActive } : q
         ),
       }));
-
-      pushToast(
-        nextActive ? "Quest ativada" : "Quest pausada",
-        target.title,
-        nextActive ? "info" : "warning"
-      );
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const completeQuestAsStudent = useCallback(
     (questId: string, studentId: string) => {
-      const quest = stateRef.current.quests.find((q) => q.id === questId);
-      const student = stateRef.current.students.find((s) => s.id === studentId);
-      if (!quest || !student || quest.completedBy.includes(studentId)) return;
-
-      let previewXp = student.xp + quest.xpReward;
-      let previewLevel = student.level;
-      let previewXpToNext = student.xpToNext;
-      let leveled = false;
-      while (previewXp >= previewXpToNext) {
-        previewXp -= previewXpToNext;
-        previewLevel += 1;
-        previewXpToNext += 50;
-        leveled = true;
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send<{ leveledUp?: boolean; level?: number }>(
+          `/api/loloverse/quests/${questId}/complete`,
+          { method: "POST", body: { studentId } }
+        )
+          .then((res) => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(
+              res.leveledUp ? `Missão concluída + Nível ${res.level}!` : "Missão concluída!",
+              "Recompensas creditadas pelo servidor.",
+              "success"
+            );
+          })
+          .catch((err) =>
+            pushToast("Não foi possível concluir", extractPbError(err, "Tente novamente."), "warning")
+          );
+        return;
       }
 
-      setState((prev) => {
-        const currentQuest = prev.quests.find((q) => q.id === questId);
-        const currentStudent = prev.students.find((s) => s.id === studentId);
-        if (
-          !currentQuest ||
-          !currentStudent ||
-          currentQuest.completedBy.includes(studentId)
-        ) {
-          return prev;
-        }
-
-        const quests = prev.quests.map((q) =>
-          q.id === questId
-            ? { ...q, completedBy: [...q.completedBy, studentId] }
-            : q
-        );
-
-        let nextXp = currentStudent.xp + currentQuest.xpReward;
-        let nextLevel = currentStudent.level;
-        let nextXpToNext = currentStudent.xpToNext;
-        while (nextXp >= nextXpToNext) {
-          nextXp -= nextXpToNext;
-          nextLevel += 1;
-          nextXpToNext += 50;
-        }
-
-        const students = prev.students.map((s) => {
-          if (s.id !== studentId) return s;
-          return {
-            ...s,
-            xp: nextXp,
-            level: nextLevel,
-            xpToNext: nextXpToNext,
-            gold: s.gold + currentQuest.goldReward,
-            hp: Math.min(s.maxHp, s.hp + 4),
-            deliveryRate: Math.min(100, s.deliveryRate + 2),
-            streakDays: s.streakDays + 1,
-            pillars: {
-              ...s.pillars,
-              [currentQuest.pillar]: Math.min(
-                100,
-                s.pillars[currentQuest.pillar] + 4
-              ),
-            },
-          };
-        });
-
-        const newLog: ActivityLog = {
-          id: uid("log"),
-          timestamp: nowLabel(),
-          actor: currentStudent.name,
-          target: currentQuest.title,
-          action: "Concluiu missão no Quadro RPG",
-          category: "quest",
-          deltaSummary: `+${currentQuest.xpReward} XP · +${currentQuest.goldReward} Ouro`,
-        };
-
-        return {
-          ...prev,
-          quests,
-          students,
-          logs: [newLog, ...prev.logs].slice(0, 40),
-        };
-      });
-
-      pushToast(
-        leveled
-          ? `Missão concluída + Nível ${previewLevel}!`
-          : `Missão concluída: ${quest.title}`,
-        `+${quest.xpReward} XP · +${quest.goldReward} Ouro · +4 HP`,
-        "success"
-      );
+      const quest = stateRef.current.quests.find((q) => q.id === questId);
+      if (!quest || quest.completedBy.includes(studentId)) return;
+      setState((prev) => ({
+        ...prev,
+        quests: prev.quests.map((q) =>
+          q.id === questId ? { ...q, completedBy: [...q.completedBy, studentId] } : q
+        ),
+      }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const redeemReward = useCallback(
     (rewardId: string, studentId: string) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send<{ rewardTitle?: string }>(
+          `/api/loloverse/rewards/${rewardId}/redeem`,
+          { method: "POST" }
+        )
+          .then((res) => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Recompensa resgatada!", res.rewardTitle || "Voucher gerado.", "success");
+          })
+          .catch((err) =>
+            pushToast("Resgate recusado", extractPbError(err, "Verifique seu saldo."), "warning")
+          );
+        return;
+      }
+
       const reward = stateRef.current.rewards.find((r) => r.id === rewardId);
       const student = stateRef.current.students.find((s) => s.id === studentId);
-      if (!reward || !student) return;
-
-      if (!reward.approved) {
-        pushToast(
-          "Recompensa em revisão",
-          "Aguardando aprovação da coordenação.",
-          "info"
-        );
-        return;
-      }
-      if (reward.redeemedCount >= reward.stockLimit) {
-        pushToast(
-          "Recompensa esgotada",
-          "Converse com o coordenador para repor o lote.",
-          "warning"
-        );
-        return;
-      }
-      if (student.gold < reward.cost) {
-        pushToast(
-          "Ouro insuficiente!",
-          `Você precisa de ${reward.cost} Ouro para "${reward.title}".`,
-          "warning"
-        );
-        return;
-      }
-
-      setState((prev) => {
-        const currReward = prev.rewards.find((r) => r.id === rewardId);
-        const currStudent = prev.students.find((s) => s.id === studentId);
-        if (
-          !currReward ||
-          !currStudent ||
-          !currReward.approved ||
-          currReward.redeemedCount >= currReward.stockLimit ||
-          currStudent.gold < currReward.cost
-        ) {
-          return prev;
-        }
-
-        const students = prev.students.map((s) =>
-          s.id === studentId ? { ...s, gold: s.gold - currReward.cost } : s
-        );
-
-        const rewards = prev.rewards.map((r) =>
+      if (!reward || !student || !reward.approved || student.gold < reward.cost) return;
+      setState((prev) => ({
+        ...prev,
+        students: prev.students.map((s) =>
+          s.id === studentId ? { ...s, gold: s.gold - reward.cost } : s
+        ),
+        rewards: prev.rewards.map((r) =>
           r.id === rewardId ? { ...r, redeemedCount: r.redeemedCount + 1 } : r
-        );
-
-        const newRedemption = {
-          id: uid("red"),
-          studentId: currStudent.id,
-          studentName: currStudent.name,
-          classId: currStudent.classId,
-          rewardId: currReward.id,
-          rewardTitle: currReward.title,
-          cost: currReward.cost,
-          timestamp: nowLabel(),
-          status: "pendente" as const,
-        };
-
-        const newLog: ActivityLog = {
-          id: uid("log"),
-          timestamp: nowLabel(),
-          actor: currStudent.name,
-          target: "Lojinha da Turma",
-          action: `Resgatou "${currReward.title}"`,
-          category: "loja",
-          deltaSummary: `-${currReward.cost} Ouro`,
-        };
-
-        return {
-          ...prev,
-          students,
-          rewards,
-          redemptions: [newRedemption, ...prev.redemptions],
-          logs: [newLog, ...prev.logs].slice(0, 40),
-        };
-      });
-
-      pushToast(
-        "Recompensa resgatada!",
-        `"${reward.title}" (-${reward.cost} Ouro). Voucher gerado!`,
-        "success"
-      );
+        ),
+      }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
-  // --- ESPAÇO HÍBRIDO (Categorias, Canais, Tópicos, Mensagens & Mesas) ---
-
+  // ===========================================================================
+  // ESPAÇO HÍBRIDO
+  // ===========================================================================
   const createCategory = useCallback(
     (name: string, color: string) => {
       const cleanName = name.trim();
       if (!cleanName) return;
-      const actorName = currentAccountRef.current?.displayName || "Docente";
 
-      const newCat = {
-        id: uid("cat"),
-        name: cleanName,
-        color: color || "#3B82F6",
-      };
-
-      const newLog: ActivityLog = {
-        id: uid("log"),
-        timestamp: nowLabel(),
-        actor: actorName,
-        target: cleanName,
-        action: "Criou categoria no Espaço Híbrido",
-        category: "espaco",
-        deltaSummary: "Nova Categoria",
-      };
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("channel_categories")
+          .create({
+            name: cleanName,
+            color: color || "#3B82F6",
+            sortOrder: stateRef.current.categories.length + 1,
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(`Categoria "${cleanName}" criada!`, undefined, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao criar categoria", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
 
       setState((prev) => ({
         ...prev,
-        categories: [...prev.categories, newCat],
-        logs: [newLog, ...prev.logs].slice(0, 40),
+        categories: [...prev.categories, { id: uid("cat"), name: cleanName, color: color || "#3B82F6" }],
       }));
-
-      pushToast(
-        `Categoria "${cleanName}" criada!`,
-        "Agora você pode adicionar canais organizados dentro dela.",
-        "success"
-      );
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const createChannel = useCallback(
@@ -999,60 +1115,47 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       const slug = toSlug(cleanTitle);
       if (!cleanTitle || !slug) return null;
 
-      const actorName = currentAccountRef.current?.displayName || "Docente";
-      const channelId = uid("ch");
-      const welcomeTopicId = uid("top");
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return null;
+        pb.collection("chat_channels")
+          .create({
+            category: categoryId,
+            slug: `#${slug}`,
+            label: slug,
+            title: cleanTitle,
+            description: description.trim() || "Canal organizado em tópicos.",
+            staffOnlyTopics,
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(`Canal "${cleanTitle}" criado!`, undefined, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao criar canal", extractPbError(err, "Tente outro nome."), "danger")
+          );
+        return null;
+      }
 
-      const newChannel = {
-        id: channelId,
-        categoryId,
-        slug: `#${slug}`,
-        label: slug,
-        title: cleanTitle,
-        description:
-          description.trim() ||
-          "Canal organizado em tópicos para discussões e aprendizados da turma.",
-        staffOnlyTopics,
-      };
-
-      const starterTopic: ChannelTopic = {
-        id: welcomeTopicId,
-        channelId,
-        title: `Boas-vindas: ${cleanTitle}`,
-        summary:
-          description.trim() ||
-          "Primeiro tópico aberto para organizar ideias e dúvidas deste canal.",
-        createdBy: actorName,
-        createdAt: nowLabel(),
-        pinned: true,
-        pillar: "social",
-      };
-
-      const newLog: ActivityLog = {
-        id: uid("log"),
-        timestamp: nowLabel(),
-        actor: actorName,
-        target: cleanTitle,
-        action: "Criou canal no Espaço Híbrido",
-        category: "espaco",
-        deltaSummary: `#${slug}`,
-      };
-
+      const id = uid("ch");
       setState((prev) => ({
         ...prev,
-        channels: [...prev.channels, newChannel],
-        topics: [starterTopic, ...prev.topics],
-        logs: [newLog, ...prev.logs].slice(0, 40),
+        channels: [
+          ...prev.channels,
+          {
+            id,
+            categoryId,
+            slug: `#${slug}`,
+            label: slug,
+            title: cleanTitle,
+            description: description.trim() || "Canal organizado em tópicos.",
+            staffOnlyTopics,
+          },
+        ],
       }));
-
-      pushToast(
-        `Canal "${cleanTitle}" criado!`,
-        "Já disponível com o primeiro tópico de boas-vindas.",
-        "success"
-      );
-      return channelId;
+      return id;
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const updateChannel = useCallback(
@@ -1061,24 +1164,34 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       if (!cleanTitle) return;
       const slug = toSlug(cleanTitle);
 
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("chat_channels")
+          .update(channelId, {
+            title: cleanTitle,
+            label: slug,
+            slug: `#${slug}`,
+            description: description.trim(),
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Canal atualizado!", cleanTitle, "info");
+          })
+          .catch((err) =>
+            pushToast("Erro ao atualizar canal", extractPbError(err, "Tente novamente."), "danger")
+          );
+        return;
+      }
+
       setState((prev) => ({
         ...prev,
-        channels: prev.channels.map((ch) =>
-          ch.id === channelId
-            ? {
-                ...ch,
-                title: cleanTitle,
-                label: slug || ch.label,
-                slug: slug ? `#${slug}` : ch.slug,
-                description: description.trim() || ch.description,
-              }
-            : ch
+        channels: prev.channels.map((c) =>
+          c.id === channelId ? { ...c, title: cleanTitle, description } : c
         ),
       }));
-
-      pushToast("Canal atualizado!", cleanTitle, "info");
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const createTopic = useCallback(
@@ -1092,71 +1205,77 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       const acc = currentAccountRef.current;
       if (!cleanTitle || !acc) return null;
 
-      const topicId = uid("top");
-      const newTopic: ChannelTopic = {
-        id: topicId,
-        channelId,
-        title: cleanTitle,
-        summary:
-          summary.trim() ||
-          "Discussão guiada aberta para troca de ideias e resolução colaborativa.",
-        createdBy: acc.displayName,
-        createdAt: nowLabel(),
-        pillar,
-      };
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return null;
+        pb.collection("channel_topics")
+          .create({
+            channel: channelId,
+            title: cleanTitle,
+            summary: summary.trim() || "Discussão guiada aberta.",
+            author: acc.id,
+            createdByName: acc.displayName,
+            pinned: false,
+            resolved: false,
+            pillar: pillar || "",
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Novo tópico aberto!", cleanTitle, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao abrir tópico", extractPbError(err, "Verifique permissões."), "danger")
+          );
+        return null;
+      }
 
-      const newLog: ActivityLog = {
-        id: uid("log"),
-        timestamp: nowLabel(),
-        actor: acc.displayName,
-        target: cleanTitle,
-        action: "Abriu novo tópico no Espaço Híbrido",
-        category: "espaco",
-        deltaSummary: "Novo Tópico",
-      };
-
+      const id = uid("top");
       setState((prev) => ({
         ...prev,
-        topics: [newTopic, ...prev.topics],
-        logs: [newLog, ...prev.logs].slice(0, 40),
+        topics: [
+          {
+            id,
+            channelId,
+            title: cleanTitle,
+            summary: summary.trim(),
+            createdBy: acc.displayName,
+            createdAt: nowLabel(),
+            pillar,
+          },
+          ...prev.topics,
+        ],
       }));
-
-      pushToast("Novo tópico aberto!", cleanTitle, "success");
-      return topicId;
+      return id;
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const updateTopic = useCallback(
     (
       topicId: string,
-      updates: Partial<
-        Pick<ChannelTopic, "title" | "summary" | "pinned" | "resolved">
-      >
+      updates: Partial<Pick<ChannelTopic, "title" | "summary" | "pinned" | "resolved">>
     ) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("channel_topics")
+          .update(topicId, updates)
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Tópico atualizado", updates.title, "info");
+          })
+          .catch((err) =>
+            pushToast("Erro ao atualizar tópico", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
+
       setState((prev) => ({
         ...prev,
-        topics: prev.topics.map((t) =>
-          t.id === topicId ? { ...t, ...updates } : t
-        ),
+        topics: prev.topics.map((t) => (t.id === topicId ? { ...t, ...updates } : t)),
       }));
-      if (updates.resolved !== undefined) {
-        pushToast(
-          updates.resolved ? "Tópico marcado como resolvido!" : "Tópico reaberto",
-          undefined,
-          updates.resolved ? "success" : "info"
-        );
-      } else if (updates.pinned !== undefined) {
-        pushToast(
-          updates.pinned ? "Tópico fixado no topo" : "Tópico desafixado",
-          undefined,
-          "info"
-        );
-      } else {
-        pushToast("Tópico atualizado", updates.title, "info");
-      }
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const sendChatMessage = useCallback(
@@ -1165,13 +1284,32 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       const acc = currentAccountRef.current;
       if (!trimmed || !acc) return;
 
-      const authorRole: "professor" | "aluno" | "coordenador" =
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("chat_messages")
+          .create({
+            channel: channelId,
+            topic: topicId,
+            author: acc.id,
+            content: trimmed,
+            pinned: false,
+          })
+          .then(() => loadFromPocketBase().catch(() => {}))
+          .catch((err) =>
+            pushToast("Erro ao enviar mensagem", extractPbError(err, "Tente novamente."), "danger")
+          );
+        return;
+      }
+
+      const authorRole =
         acc.role === "teacher"
           ? "professor"
           : acc.role === "coordinator"
           ? "coordenador"
+          : acc.role === "admin"
+          ? "admin"
           : "aluno";
-
       setState((prev) => ({
         ...prev,
         messages: [
@@ -1192,54 +1330,77 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         ],
       }));
     },
-    []
+    [loadFromPocketBase, pushToast]
   );
 
-  const toggleReaction = useCallback((messageId: string, emoji: string) => {
-    setState((prev) => ({
-      ...prev,
-      messages: prev.messages.map((m) => {
-        if (m.id !== messageId) return m;
-        const existing = m.reactions.find((r) => r.emoji === emoji);
-        if (!existing) {
+  const toggleReaction = useCallback(
+    (messageId: string, emoji: string) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send(`/api/loloverse/messages/${messageId}/react`, {
+          method: "POST",
+          body: { emoji },
+        })
+          .then(() => loadFromPocketBase().catch(() => {}))
+          .catch(() => {});
+        return;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        messages: prev.messages.map((m) => {
+          if (m.id !== messageId) return m;
+          const existing = m.reactions.find((r) => r.emoji === emoji);
+          if (!existing) {
+            return {
+              ...m,
+              reactions: [...m.reactions, { emoji, count: 1, userReacted: true }],
+            };
+          }
+          const nextCount = existing.userReacted ? existing.count - 1 : existing.count + 1;
           return {
             ...m,
-            reactions: [...m.reactions, { emoji, count: 1, userReacted: true }],
+            reactions:
+              nextCount <= 0
+                ? m.reactions.filter((r) => r.emoji !== emoji)
+                : m.reactions.map((r) =>
+                    r.emoji === emoji
+                      ? { ...r, count: nextCount, userReacted: !r.userReacted }
+                      : r
+                  ),
           };
-        }
-        const nextCount = existing.userReacted
-          ? existing.count - 1
-          : existing.count + 1;
-        return {
-          ...m,
-          reactions:
-            nextCount <= 0
-              ? m.reactions.filter((r) => r.emoji !== emoji)
-              : m.reactions.map((r) =>
-                  r.emoji === emoji
-                    ? { ...r, count: nextCount, userReacted: !r.userReacted }
-                    : r
-                ),
-        };
-      }),
-    }));
-  }, []);
+        }),
+      }));
+    },
+    [loadFromPocketBase]
+  );
 
   const togglePinMessage = useCallback(
     (messageId: string) => {
+      const target = stateRef.current.messages.find((m) => m.id === messageId);
+      if (!target) return;
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("chat_messages")
+          .update(messageId, { pinned: !target.pinned })
+          .then(() => loadFromPocketBase().catch(() => {}))
+          .catch((err) =>
+            pushToast("Erro ao fixar", extractPbError(err, "Apenas staff."), "danger")
+          );
+        return;
+      }
+
       setState((prev) => ({
         ...prev,
         messages: prev.messages.map((m) =>
           m.id === messageId ? { ...m, pinned: !m.pinned } : m
         ),
       }));
-      pushToast(
-        "Destaque atualizado",
-        "Status de fixação da mensagem alterado.",
-        "info"
-      );
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const createStudyRoom = useCallback(
@@ -1251,115 +1412,122 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     }) => {
       const cleanName = input.name.trim();
       if (!cleanName) return;
-      const actorName = currentAccountRef.current?.displayName || "Docente";
 
-      const newRoom: StudyRoom = {
-        id: uid("room"),
-        name: cleanName,
-        topic: input.topic.trim() || "Estudo colaborativo guiado",
-        maxSeats: Math.max(2, Math.min(20, input.maxSeats || 6)),
-        accentColor: input.accentColor || "#FACC15",
-        participantIds: [],
-      };
-
-      const newLog: ActivityLog = {
-        id: uid("log"),
-        timestamp: nowLabel(),
-        actor: actorName,
-        target: cleanName,
-        action: "Criou nova Mesa de Estudo no Espaço Híbrido",
-        category: "espaco",
-        deltaSummary: `${newRoom.maxSeats} vagas`,
-      };
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("study_rooms")
+          .create({
+            name: cleanName,
+            topic: input.topic.trim() || "Estudo colaborativo guiado",
+            maxSeats: Math.max(2, Math.min(20, input.maxSeats || 6)),
+            accentColor: input.accentColor || "#FACC15",
+            participants: [],
+            active: true,
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(`Mesa "${cleanName}" criada!`, undefined, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao criar mesa", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
 
       setState((prev) => ({
         ...prev,
-        studyRooms: [...prev.studyRooms, newRoom],
-        logs: [newLog, ...prev.logs].slice(0, 40),
+        studyRooms: [
+          ...prev.studyRooms,
+          {
+            id: uid("room"),
+            name: cleanName,
+            topic: input.topic.trim(),
+            maxSeats: Math.max(2, Math.min(20, input.maxSeats || 6)),
+            accentColor: input.accentColor || "#FACC15",
+            participantIds: [],
+          },
+        ],
       }));
-
-      pushToast(
-        `Mesa "${cleanName}" criada!`,
-        `Tema: ${newRoom.topic}`,
-        "success"
-      );
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const updateStudyRoom = useCallback(
     (
       roomId: string,
-      updates: Partial<
-        Pick<StudyRoom, "name" | "topic" | "maxSeats" | "accentColor">
-      >
+      updates: Partial<Pick<StudyRoom, "name" | "topic" | "maxSeats" | "accentColor">>
     ) => {
-      const target = stateRef.current.studyRooms.find((r) => r.id === roomId);
-      if (!target) return;
-      const actorName = currentAccountRef.current?.displayName || "Docente";
-
-      const nextName = updates.name?.trim() || target.name;
-      const nextTopic = updates.topic?.trim() || target.topic;
-
-      const newLog: ActivityLog = {
-        id: uid("log"),
-        timestamp: nowLabel(),
-        actor: actorName,
-        target: nextName,
-        action: `Atualizou tema da Mesa de Estudo para "${nextTopic}"`,
-        category: "espaco",
-        deltaSummary: "Tema atualizado",
-      };
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("study_rooms")
+          .update(roomId, updates)
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Mesa atualizada!", updates.name, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao atualizar mesa", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
 
       setState((prev) => ({
         ...prev,
         studyRooms: prev.studyRooms.map((r) =>
-          r.id === roomId
-            ? {
-                ...r,
-                name: nextName,
-                topic: nextTopic,
-                maxSeats: updates.maxSeats
-                  ? Math.max(2, Math.min(20, updates.maxSeats))
-                  : r.maxSeats,
-                accentColor: updates.accentColor || r.accentColor,
-              }
-            : r
+          r.id === roomId ? { ...r, ...updates } : r
         ),
-        logs: [newLog, ...prev.logs].slice(0, 40),
       }));
-
-      pushToast(
-        `Mesa "${nextName}" atualizada!`,
-        `Novo tema: ${nextTopic}`,
-        "success"
-      );
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const deleteStudyRoom = useCallback(
     (roomId: string) => {
-      const target = stateRef.current.studyRooms.find((r) => r.id === roomId);
-      if (!target) return;
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("study_rooms")
+          .delete(roomId)
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Mesa encerrada", undefined, "warning");
+          })
+          .catch((err) =>
+            pushToast("Erro ao remover mesa", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
 
       setState((prev) => ({
         ...prev,
         studyRooms: prev.studyRooms.filter((r) => r.id !== roomId),
       }));
-
-      pushToast("Mesa encerrada", `"${target.name}" foi removida.`, "warning");
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const joinStudyRoom = useCallback(
     (roomId: string) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send<{ roomName?: string }>(`/api/loloverse/study-rooms/${roomId}/join`, {
+          method: "POST",
+        })
+          .then((res) => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(`Você entrou em "${res.roomName || "Mesa"}"`, undefined, "success");
+          })
+          .catch((err) =>
+            pushToast("Não foi possível entrar", extractPbError(err, "Mesa cheia."), "warning")
+          );
+        return;
+      }
+
       const acc = currentAccountRef.current;
       if (!acc) return;
-      const room = stateRef.current.studyRooms.find((r) => r.id === roomId);
-      if (!room) return;
-
       setState((prev) => ({
         ...prev,
         studyRooms: prev.studyRooms.map((r) => {
@@ -1369,162 +1537,128 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
           }
           return { ...r, participantIds: withoutMe };
         }),
-        students: acc.studentId
-          ? prev.students.map((s) =>
-              s.id === acc.studentId
-                ? {
-                    ...s,
-                    onlineStatus: "em-grupo",
-                    studyActivity: `Na mesa: ${room.name}`,
-                  }
-                : s
-            )
-          : prev.students,
       }));
-
-      pushToast(
-        `Você entrou em "${room.name}"`,
-        "Seu status no Espaço Híbrido foi atualizado para Em Grupo.",
-        "success"
-      );
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const leaveStudyRoom = useCallback(() => {
+    if (isPocketBaseEnabled) {
+      const pb = getPocketBase();
+      if (!pb) return;
+      pb.send("/api/loloverse/study-rooms/leave", { method: "POST" })
+        .then(() => {
+          loadFromPocketBase().catch(() => {});
+          pushToast("Saiu da mesa de estudo", undefined, "info");
+        })
+        .catch(() => {});
+      return;
+    }
+
     const acc = currentAccountRef.current;
     if (!acc) return;
-
     setState((prev) => ({
       ...prev,
       studyRooms: prev.studyRooms.map((r) => ({
         ...r,
         participantIds: r.participantIds.filter((id) => id !== acc.id),
       })),
-      students: acc.studentId
-        ? prev.students.map((s) =>
-            s.id === acc.studentId
-              ? {
-                  ...s,
-                  onlineStatus: "online",
-                  studyActivity: "Disponível no Espaço Híbrido",
-                }
-              : s
-          )
-        : prev.students,
     }));
-
-    pushToast(
-      "Saiu da mesa de estudo",
-      "Você voltou para o mural do Espaço Híbrido.",
-      "info"
-    );
-  }, [pushToast]);
+  }, [loadFromPocketBase, pushToast]);
 
   const updateMyStudyStatus = useCallback(
     (onlineStatus: Student["onlineStatus"], studyActivity: string) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send("/api/loloverse/presence", {
+          method: "POST",
+          body: { onlineStatus, studyActivity },
+        })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Status atualizado!", studyActivity.trim() || undefined, "info");
+          })
+          .catch(() => {});
+        return;
+      }
+
       const acc = currentAccountRef.current;
       if (!acc?.studentId) return;
-
       setState((prev) => ({
         ...prev,
         students: prev.students.map((s) =>
-          s.id === acc.studentId
-            ? {
-                ...s,
-                onlineStatus,
-                studyActivity: studyActivity.trim() || "Estudando no Loloverse",
-              }
-            : s
+          s.id === acc.studentId ? { ...s, onlineStatus, studyActivity } : s
         ),
       }));
-
-      pushToast(
-        "Status de estudo atualizado!",
-        studyActivity.trim() || undefined,
-        "info"
-      );
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
+  // ===========================================================================
+  // COORDENAÇÃO & GOVERNANÇA
+  // ===========================================================================
   const toggleRewardApproval = useCallback(
     (rewardId: string) => {
       const target = stateRef.current.rewards.find((r) => r.id === rewardId);
       if (!target) return;
       const approvedNow = !target.approved;
-      const actorName =
-        currentAccountRef.current?.displayName || "Coord. Helena Prado";
 
-      setState((prev) => {
-        const rewards = prev.rewards.map((r) =>
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("shop_rewards")
+          .update(rewardId, { approved: approvedNow })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(
+              approvedNow ? "Recompensa liberada" : "Recompensa pausada",
+              target.title,
+              approvedNow ? "success" : "warning"
+            );
+          })
+          .catch((err) =>
+            pushToast("Erro na Lojinha", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        rewards: prev.rewards.map((r) =>
           r.id === rewardId ? { ...r, approved: approvedNow } : r
-        );
-
-        const newLog: ActivityLog = {
-          id: uid("log"),
-          timestamp: nowLabel(),
-          actor: actorName,
-          target: target.title,
-          action: approvedNow
-            ? "Aprovou item na Lojinha da Escola"
-            : "Pausou item na Lojinha para revisão pedagógica",
-          category: "governanca",
-          deltaSummary: approvedNow ? "Aprovado" : "Pausado",
-        };
-
-        return {
-          ...prev,
-          rewards,
-          logs: [newLog, ...prev.logs].slice(0, 40),
-        };
-      });
-
-      pushToast(
-        approvedNow ? "Recompensa liberada na Lojinha" : "Recompensa pausada",
-        target.title,
-        approvedNow ? "success" : "warning"
-      );
+        ),
+      }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const updateRewardCost = useCallback(
     (rewardId: string, newCost: number) => {
-      const target = stateRef.current.rewards.find((r) => r.id === rewardId);
-      if (!target) return;
-      const clamped = Math.max(10, Math.min(500, newCost));
-      const actorName =
-        currentAccountRef.current?.displayName || "Coord. Helena Prado";
+      const clamped = Math.max(10, Math.min(5000, newCost));
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("shop_rewards")
+          .update(rewardId, { cost: clamped })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Preço atualizado", `${clamped} Ouro`, "info");
+          })
+          .catch((err) =>
+            pushToast("Erro ao atualizar preço", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
 
-      setState((prev) => {
-        const rewards = prev.rewards.map((r) =>
+      setState((prev) => ({
+        ...prev,
+        rewards: prev.rewards.map((r) =>
           r.id === rewardId ? { ...r, cost: clamped } : r
-        );
-
-        const newLog: ActivityLog = {
-          id: uid("log"),
-          timestamp: nowLabel(),
-          actor: actorName,
-          target: target.title,
-          action: `Ajustou preço para ${clamped} Ouro`,
-          category: "governanca",
-          deltaSummary: `${clamped} Ouro`,
-        };
-
-        return {
-          ...prev,
-          rewards,
-          logs: [newLog, ...prev.logs].slice(0, 40),
-        };
-      });
-      pushToast(
-        "Economia recalibrada",
-        `"${target.title}" agora custa ${clamped} Ouro.`,
-        "info"
-      );
+        ),
+      }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const createReward = useCallback(
@@ -1535,8 +1669,30 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       category: ShopReward["category"];
       stockLimit: number;
     }) => {
-      const actorName =
-        currentAccountRef.current?.displayName || "Coord. Helena Prado";
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("shop_rewards")
+          .create({
+            title: input.title.trim(),
+            description: input.description.trim(),
+            cost: Math.max(10, input.cost),
+            category: input.category,
+            iconName: "Gift",
+            approved: true,
+            stockLimit: Math.max(1, input.stockLimit),
+            redeemedCount: 0,
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Nova recompensa criada!", input.title, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao criar recompensa", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
+
       const newReward: ShopReward = {
         id: uid("rew"),
         title: input.title.trim(),
@@ -1548,128 +1704,106 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
         stockLimit: Math.max(1, input.stockLimit),
         redeemedCount: 0,
       };
-      const newLog: ActivityLog = {
-        id: uid("log"),
-        timestamp: nowLabel(),
-        actor: actorName,
-        target: newReward.title,
-        action: "Adicionou nova recompensa aprovada na Lojinha",
-        category: "governanca",
-        deltaSummary: `${newReward.cost} Ouro`,
-      };
-      setState((prev) => ({
-        ...prev,
-        rewards: [newReward, ...prev.rewards],
-        logs: [newLog, ...prev.logs].slice(0, 40),
-      }));
-      pushToast(
-        "Nova recompensa criada!",
-        `"${input.title}" já disponível para os alunos.`,
-        "success"
-      );
+      setState((prev) => ({ ...prev, rewards: [newReward, ...prev.rewards] }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const registerIntervention = useCallback(
     (studentId: string, note: string, restoreHp = 15) => {
-      const target = stateRef.current.students.find((s) => s.id === studentId);
-      if (!target) return;
-      const actorName =
-        currentAccountRef.current?.displayName || "Coord. Helena Prado";
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send("/api/loloverse/interventions", {
+          method: "POST",
+          body: { studentId, note, restoreHp },
+        })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Intervenção registrada!", `+${restoreHp} HP de apoio.`, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro na intervenção", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
 
-      setState((prev) => {
-        const students = prev.students.map((s) => {
-          if (s.id !== studentId) return s;
-          return {
-            ...s,
-            hp: Math.min(s.maxHp, s.hp + restoreHp),
-            interventionsCount: s.interventionsCount + 1,
-            lastInterventionNote:
-              note.trim() || "Plano de acolhimento pedagógico iniciado.",
-          };
-        });
-
-        const newLog: ActivityLog = {
-          id: uid("log"),
-          timestamp: nowLabel(),
-          actor: actorName,
-          target: target.name,
-          action: `Intervenção pedagógica: ${note.trim() || "Acolhimento"}`,
-          category: "intervencao",
-          deltaSummary: `+${restoreHp} HP de apoio`,
-        };
-
-        return {
-          ...prev,
-          students,
-          logs: [newLog, ...prev.logs].slice(0, 40),
-        };
-      });
-
-      pushToast(
-        "Intervenção registrada!",
-        `${target.name} recebeu plano de apoio (+${restoreHp} HP restaurados).`,
-        "success"
-      );
+      setState((prev) => ({
+        ...prev,
+        students: prev.students.map((s) =>
+          s.id === studentId
+            ? {
+                ...s,
+                hp: Math.min(s.maxHp, s.hp + restoreHp),
+                interventionsCount: s.interventionsCount + 1,
+                lastInterventionNote: note.trim() || "Plano de acolhimento iniciado.",
+              }
+            : s
+        ),
+      }));
     },
-    [pushToast]
+    [loadFromPocketBase, pushToast]
   );
 
   const resetDemoData = useCallback(() => {
+    if (isPocketBaseEnabled) return;
+    setState(INITIAL_STATE);
+    persistSession(null);
     try {
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {
-      // Ignore storage error
+      // Ignora erro
     }
-    setState(INITIAL_STATE);
-    pushToast(
-      "Dados da demo resetados!",
-      "Contas, pontos, presenças, missões e Espaço Híbrido voltaram ao estado inicial.",
-      "info"
-    );
-  }, [pushToast]);
+    pushToast("Demonstração restaurada", undefined, "info");
+  }, [persistSession, pushToast]);
+
+  const value: LoloverseContextValue = {
+    state,
+    invites,
+    isBackendConnected: isPocketBaseEnabled,
+    currentAccount,
+    persona,
+    login,
+    loginWithGoogle,
+    verifyInvite,
+    generateInvites,
+    revokeInvite,
+    refreshData,
+    registerAccount,
+    logout,
+    setSelectedClassId,
+    updateAttendance,
+    applyBehaviorFeedback,
+    createQuest,
+    toggleQuestActive,
+    completeQuestAsStudent,
+    redeemReward,
+    createCategory,
+    createChannel,
+    updateChannel,
+    createTopic,
+    updateTopic,
+    sendChatMessage,
+    toggleReaction,
+    togglePinMessage,
+    createStudyRoom,
+    updateStudyRoom,
+    deleteStudyRoom,
+    joinStudyRoom,
+    leaveStudyRoom,
+    updateMyStudyStatus,
+    toggleRewardApproval,
+    updateRewardCost,
+    createReward,
+    registerIntervention,
+    resetDemoData,
+    toasts,
+    dismissToast,
+    hydrated,
+  };
 
   return (
-    <LoloverseContext.Provider
-      value={{
-        state,
-        currentAccount,
-        persona,
-        login,
-        registerAccount,
-        logout,
-        setSelectedClassId,
-        updateAttendance,
-        applyBehaviorFeedback,
-        createQuest,
-        toggleQuestActive,
-        completeQuestAsStudent,
-        redeemReward,
-        createCategory,
-        createChannel,
-        updateChannel,
-        createTopic,
-        updateTopic,
-        sendChatMessage,
-        toggleReaction,
-        togglePinMessage,
-        createStudyRoom,
-        updateStudyRoom,
-        deleteStudyRoom,
-        joinStudyRoom,
-        leaveStudyRoom,
-        updateMyStudyStatus,
-        toggleRewardApproval,
-        updateRewardCost,
-        createReward,
-        registerIntervention,
-        resetDemoData,
-        toasts,
-        dismissToast,
-        hydrated,
-      }}
-    >
+    <LoloverseContext.Provider value={value}>
       {children}
     </LoloverseContext.Provider>
   );

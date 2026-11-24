@@ -10,7 +10,7 @@ import { StudentView } from "@/components/student/StudentView";
 import { CoordinatorView } from "@/components/coordinator/CoordinatorView";
 
 export default function HomePage() {
-  const { currentAccount, hydrated } = useLoloverse();
+  const { currentAccount, hydrated, isBackendConnected } = useLoloverse();
 
   if (!hydrated) {
     return (
@@ -38,17 +38,20 @@ export default function HomePage() {
       <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 py-6">
         {currentAccount.role === "teacher" && <TeacherView />}
         {currentAccount.role === "student" && <StudentView />}
-        {currentAccount.role === "coordinator" && <CoordinatorView />}
+        {(currentAccount.role === "coordinator" ||
+          currentAccount.role === "admin") && <CoordinatorView />}
       </main>
 
       <footer className="mt-8 border-t-2 border-zinc-900 bg-white/80">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs font-semibold text-zinc-600">
           <p>
             <span className="font-hand text-base text-zinc-900">Loloverse</span>{" "}
-            · Plataforma Educacional (Contas de Teste + Gestão Escolar + Missões RPG + Espaço Híbrido)
+            · Gestão Escolar + Pulso da Turma + Missões RPG + Espaço Híbrido
           </p>
           <p className="text-[11px]">
-            Sessão por aba (<code className="font-mono">sessionStorage</code>) + Sincronização ao vivo (<code className="font-mono">localStorage</code>)
+            {isBackendConnected
+              ? "Conectado em tempo real · Banco Seguro"
+              : "Modo demonstração local"}
           </p>
         </div>
       </footer>

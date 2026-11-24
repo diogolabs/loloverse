@@ -45,6 +45,7 @@ pocketbase/*.bak
 
 # local reference repos (never commit)
 repositorios-exemplo/
+prints/
 
 # vercel
 .vercel

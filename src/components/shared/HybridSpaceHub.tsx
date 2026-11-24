@@ -126,7 +126,9 @@ export function HybridSpaceHub({ classId }: { classId?: string }) {
   if (!currentAccount || !activeChannel) return null;
 
   const isStaff =
-    currentAccount.role === "teacher" || currentAccount.role === "coordinator";
+    currentAccount.role === "teacher" ||
+    currentAccount.role === "coordinator" ||
+    currentAccount.role === "admin";
   const targetClassId =
     classId || currentAccount.classId || state.selectedClassId;
 

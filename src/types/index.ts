@@ -1,10 +1,26 @@
-export type Persona = "teacher" | "student" | "coordinator";
+export type Persona = "teacher" | "student" | "coordinator" | "admin";
 
 export type AttendanceStatus = "presente" | "falta" | "atraso";
 
 export type EngagementPillar = "proposito" | "maestria" | "criatividade" | "social";
 
 export type QuestType = "diaria" | "tarefa" | "boss";
+
+export interface InviteRecord {
+  id: string;
+  code: string;
+  email: string;
+  role: "student" | "teacher" | "coordinator";
+  classId?: string;
+  expiresAt?: string;
+  maxUses: number;
+  usedCount: number;
+  active: boolean;
+  usedBy?: string;
+  usedAt?: string;
+  note?: string;
+  created?: string;
+}
 
 export interface Account {
   id: string;
@@ -163,7 +179,7 @@ export interface ChatMessage {
   topicId: string;
   authorId: string;
   authorName: string;
-  authorRole: "professor" | "aluno" | "coordenador";
+  authorRole: "professor" | "aluno" | "coordenador" | "admin";
   avatarSeed: number;
   avatarColor: string;
   content: string;
@@ -186,7 +202,8 @@ export interface ActivityLog {
     | "intervencao"
     | "governanca"
     | "conta"
-    | "espaco";
+    | "espaco"
+    | "seguranca";
   deltaSummary?: string;
 }
 
