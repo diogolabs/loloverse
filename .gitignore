@@ -21,6 +21,8 @@
 # misc
 .DS_Store
 *.pem
+*.key
+chave/
 
 # debug
 npm-debug.log*
@@ -30,6 +32,19 @@ yarn-error.log*
 
 # env files
 .env*
+!.env.example
+!pocketbase/deploy/.env.example
+
+# pocketbase runtime data & binaries (NEVER commit secrets or DBs)
+pocketbase/pb_data/
+pocketbase/pocketbase
+pocketbase/*.zip
+pocketbase/*.db
+pocketbase/*.sqlite*
+pocketbase/*.bak
+
+# local reference repos (never commit)
+repositorios-exemplo/
 
 # vercel
 .vercel

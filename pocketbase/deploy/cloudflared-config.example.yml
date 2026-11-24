@@ -1,0 +1,27 @@
+# Opção Recomendada: Cloudflare Tunnel (`cloudflared`)
+# Vantagens para VM Oracle 1 OCPU / 1 GB RAM:
+# - ZERO portas HTTP/HTTPS abertas no firewall da VM ou Security List da Oracle
+# - TLS/HTTPS automático + WAF + proteção DDoS da Cloudflare
+# - Bloqueia o painel administrativo `/_/` na internet pública (acesse `/_/` apenas por túnel SSH!)
+#
+# Copie para /etc/cloudflared/config.yml após `cloudflared tunnel login` e `cloudflared tunnel create loloverse-pb`
+
+tunnel: SEU-TUNNEL-UUID-AQUI
+credentials-file: /etc/cloudflared/SEU-TUNNEL-UUID-AQUI.json
+
+ingress:
+  # Bloqueia acesso público ao painel de Superuser /_/ (use túnel SSH: ssh -L 8090:127.0.0.1:8090 ubuntu@IP)
+  - hostname: api.seudominio.com.br
+    path: ^/_/
+    service: http_status:404
+
+  # Libera API e Realtime SSE do PocketBase
+  - hostname: api.seudominio.com.br
+    service: http://127.0.0.1:8090
+    originRequest:
+      noTLSVerify: false
+      connectTimeout: 10s
+      # Necessário para Realtime (Server-Sent Events) não sofrer buffering
+      disableChunkedEncoding: false
+
+  - service: http_status:404

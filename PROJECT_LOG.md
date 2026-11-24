@@ -134,5 +134,12 @@ Todas as contas iniciais usam a senha simples **`123`** (e novas contas podem se
 
 ## 8. Próximos Passos Previstos
 
-- [ ] Coletar e implementar o feedback do usuário após testes ao vivo na Vercel.
-- [ ] (Futuro / Pós-validação do MVP) Migrar persistência local (`localStorage`) para backend multi-dispositivo real (ex: Supabase Auth + PostgreSQL + Realtime) e áudio/Pomodoro nas Mesas de Estudo.
+- [x] **Modelagem & Deploy Inicial do Backend Seguro em PocketBase (`pocketbase/`):**
+  - Schema relacional com 14 coleções, índices e matriz RBAC em `pocketbase/pb_migrations/1764000001_initial_schema.js` e seed estrutural sem credenciais fixas em `1764000002_seed_initial_school.js`.
+  - Guarda de perímetro (`00_security_guard.pb.js`): bloqueia `/_/` via Cloudflare/proxy com `404` (acesso ao painel Superuser somente por túnel SSH) + cabeçalhos HTTP de segurança.
+  - Autenticação escolar segura (`01_auth_invites.pb.js`): cadastro exclusivamente via **Google OAuth2** com **código de convite obrigatório vinculado 1-para-1 ao e-mail** (inclusive alunos) + exceção controlada (`allowPasswordLogin = true`) para conta de **Admin escolar** fora do modo Google.
+  - Motor transacional RPG/Economia 100% server-side (`02_rpg_economy.pb.js`), proteção anti-spoofing no Espaço Híbrido (`03_hybrid_space.pb.js`) e ocultação LGPD em REST/Realtime (`04_privacy_audit.pb.js`).
+  - **Publicado e validado ao vivo na VM Oracle (`Ubuntu 22.04 x86_64`, 1 GB RAM):** `pocketbase v0.40.6` via `systemd` (`GOMEMLIMIT=192MiB`, ~38 MB RSS), escutando apenas na bridge privada do `cloudflared-tunnel` (`172.18.0.1:8090`), com regra persistente `iptables` restrita à rede interna do Docker.
+- [ ] Apontar o subdomínio `loloverse.diogolabs.dev.br` no Cloudflare Zero Trust Tunnel para `http://172.18.0.1:8090`, criar o Superuser + Admin escolar e configurar Google OAuth2 Client ID/Secret.
+- [ ] Integrar o cliente PocketBase SDK no frontend Next.js (login Google + validação de convite, modo Admin e-mail/senha, painel de convites Modo Híbrido com CSV/SMTP e Realtime).
+- [ ] Etapas futuras (migrations incrementais): Calendário Letivo (Bimestre/Trimestre), Avaliações Online Anti-Cola + Validação de Notas, Grade Semanal com Disponibilidade Docente & BNCC, e Mapeamento de Turmas (`seating_maps`).

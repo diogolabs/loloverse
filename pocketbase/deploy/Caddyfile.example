@@ -1,0 +1,27 @@
+# Opção Alternativa: Caddy Reverse Proxy (caso prefira DNS proxied na Cloudflare em vez de Tunnel)
+# Consome ~20 MB RAM em ARM64 e gerencia TLS automaticamente.
+# Copie para /etc/caddy/Caddyfile e substitua api.seudominio.com.br pelo seu subdomínio.
+
+api.seudominio.com.br {
+    # Bloqueia acesso público ao painel Superuser /_/ (acesse apenas via túnel SSH)
+    @admin path /_ /_/*
+    respond @admin 404
+
+    # Cabeçalhos básicos de segurança
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # Limite de payload (evita abuso de RAM em VM 1GB)
+    request_body {
+        max_size 10MB
+    }
+
+    reverse_proxy 127.0.0.1:8090 {
+        # Flush imediato para PocketBase Realtime (SSE)
+        flush_interval -1
+    }
+}

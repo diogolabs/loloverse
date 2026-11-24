@@ -1,0 +1,51 @@
+[Unit]
+Description=Loloverse PocketBase Backend (Hardened 1GB VM)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pocketbase
+Group=pocketbase
+WorkingDirectory=/opt/loloverse-pb
+
+# Endereço padrão (sobrescrevível em /opt/loloverse-pb/.env, ex: 172.18.0.1:8090 para bridge do cloudflared)
+Environment=PB_HTTP_ADDR=127.0.0.1:8090
+
+# Carrega variáveis opcionais (PB_HTTP_ADDR, bootstrap inicial do admin etc.)
+EnvironmentFile=-/opt/loloverse-pb/.env
+
+# Otimização rigorosa de memória para VM Oracle 1 OCPU / 1 GB RAM compartilhada
+Environment=GOMEMLIMIT=192MiB
+Environment=GOGC=60
+
+# Escuta SOMENTE em interface privada — exposição pública apenas via Cloudflare Tunnel HTTPS
+ExecStart=/opt/loloverse-pb/pocketbase serve \
+  --http=${PB_HTTP_ADDR} \
+  --dir=/opt/loloverse-pb/pb_data \
+  --migrationsDir=/opt/loloverse-pb/pb_migrations \
+  --hooksDir=/opt/loloverse-pb/pb_hooks
+
+Restart=always
+RestartSec=3
+LimitNOFILE=4096
+MemoryHigh=220M
+MemoryMax=300M
+
+# Hardening systemd (princípio do menor privilégio)
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/opt/loloverse-pb/pb_data
+
+[Install]
+WantedBy=multi-user.target
