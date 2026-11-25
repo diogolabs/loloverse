@@ -49,6 +49,23 @@ import {
 const STORAGE_KEY = "loloverse_mvp_state_v4";
 const SESSION_KEY = "loloverse_session_account_id_v4";
 
+function openGoogleOAuthPopup(url?: string): Window | null {
+  if (typeof window === "undefined" || !window.open) return null;
+  let width = 1024;
+  let height = 768;
+  const innerWidth = window.innerWidth;
+  const innerHeight = window.innerHeight;
+  width = width > innerWidth ? innerWidth : width;
+  height = height > innerHeight ? innerHeight : height;
+  const left = innerWidth / 2 - width / 2;
+  const top = innerHeight / 2 - height / 2;
+  return window.open(
+    url,
+    "popup_window",
+    `width=${width},height=${height},top=${top},left=${left},resizable,menubar=no`
+  );
+}
+
 const EMPTY_STATE: LoloverseState = {
   accounts: [],
   studyRooms: [],
@@ -569,17 +586,51 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       if (!pb) {
         return { ok: false, error: "Backend PocketBase não configurado." };
       }
+
+      // Abre o popup sincronamente no clique do usuário sem herdar Cross-Origin-Opener-Policy,
+      // garantindo que popup.close() feche a janela imediatamente após o callback OAuth2.
+      let popup = openGoogleOAuthPopup("about:blank");
+      if (popup) {
+        try {
+          popup.document.write(
+            `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"/><title>Loloverse · Conectando ao Google...</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#FAF8F5;font-family:system-ui,sans-serif;color:#18181B;padding:16px}.card{background:#FFF;border:2px solid #18181B;border-radius:16px;box-shadow:4px 4px 0 #18181B;padding:24px 28px;text-align:center;max-width:360px}.badge{display:inline-block;background:#FACC15;border:2px solid #18181B;border-radius:8px;padding:3px 10px;font-weight:800;font-size:11px;text-transform:uppercase;margin-bottom:10px}h2{margin:0 0 6px;font-size:18px}p{margin:0;font-size:13px;color:#52525B}</style></head><body><div class="card"><div class="badge">Loloverse</div><h2>Conectando ao Google...</h2><p>Aguarde o redirecionamento seguro.</p></div></body></html>`
+          );
+          popup.document.close();
+        } catch {
+          // Ignora se o navegador bloquear escrita inicial
+        }
+      }
+
+      const closePopupSafely = () => {
+        try {
+          if (popup && !popup.closed) {
+            popup.close();
+          }
+        } catch {
+          // Ignora erro cross-origin ao fechar
+        }
+      };
+
       try {
         const cleanCode = inviteCode ? inviteCode.trim().toUpperCase() : "";
         await pb.collection("users").authWithOAuth2({
           provider: "google",
           createData: cleanCode ? { inviteCode: cleanCode } : undefined,
+          urlCallback: (url: string) => {
+            if (!popup || popup.closed) {
+              popup = openGoogleOAuthPopup(url);
+            } else {
+              popup.location.replace(url);
+            }
+          },
         });
+        closePopupSafely();
         await loadFromPocketBase();
         const name = pb.authStore.record?.displayName || "Bem-vindo(a)";
         pushToast(`Bem-vindo(a), ${name}!`, "Sessão Google ativa.", "success");
         return { ok: true };
       } catch (err) {
+        closePopupSafely();
         pb.authStore.clear();
         return {
           ok: false,
