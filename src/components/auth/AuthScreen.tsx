@@ -77,14 +77,17 @@ export function AuthScreen() {
 
   const [error, setError] = useState<string | null>(null);
 
-  // Lê link direto de convite (?convite=LOLO-...&email=...) automaticamente
+  // Lê link direto de convite (?convite=LOLO-...&email=... ou ?aba=convite) automaticamente
   useEffect(() => {
     if (!isBackendConnected || typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const qCode = params.get("convite") || params.get("code");
     const qEmail = params.get("email");
+    const qAba = params.get("aba");
     if (qCode) {
       setInviteCode(qCode.trim().toUpperCase());
+      setPbTab("invite");
+    } else if (qAba === "convite") {
       setPbTab("invite");
     }
     if (qEmail) {

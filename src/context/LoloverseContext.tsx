@@ -48,22 +48,14 @@ import {
 
 const STORAGE_KEY = "loloverse_mvp_state_v4";
 const SESSION_KEY = "loloverse_session_account_id_v4";
+const OAUTH_PENDING_KEY = "loloverse_oauth2_pending_v1";
 
-function openGoogleOAuthPopup(url?: string): Window | null {
-  if (typeof window === "undefined" || !window.open) return null;
-  let width = 1024;
-  let height = 768;
-  const innerWidth = window.innerWidth;
-  const innerHeight = window.innerHeight;
-  width = width > innerWidth ? innerWidth : width;
-  height = height > innerHeight ? innerHeight : height;
-  const left = innerWidth / 2 - width / 2;
-  const top = innerHeight / 2 - height / 2;
-  return window.open(
-    url,
-    "popup_window",
-    `width=${width},height=${height},top=${top},left=${left},resizable,menubar=no`
-  );
+interface PendingOAuth2 {
+  providerName: string;
+  state: string;
+  codeVerifier: string;
+  redirectUrl: string;
+  inviteCode?: string;
 }
 
 const EMPTY_STATE: LoloverseState = {
@@ -129,6 +121,10 @@ interface LoloverseContextValue {
   persona: Persona;
   login: (identifier: string, password: string) => Promise<LoginResult>;
   loginWithGoogle: (inviteCode?: string) => Promise<LoginResult>;
+  completeGoogleCallback: (
+    code: string,
+    stateParam: string
+  ) => Promise<LoginResult & { displayName?: string }>;
   verifyInvite: (email: string, code: string) => Promise<InviteVerifyResult>;
   generateInvites: (items: GenerateInviteItem[]) => Promise<InviteRecord[]>;
   revokeInvite: (inviteId: string) => Promise<void>;
@@ -583,60 +579,103 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
   const loginWithGoogle = useCallback(
     async (inviteCode?: string): Promise<LoginResult> => {
       const pb = getPocketBase();
-      if (!pb) {
+      if (!pb || typeof window === "undefined") {
+        return { ok: false, error: "Backend PocketBase não configurado." };
+      }
+      try {
+        const authMethods = await pb.collection("users").listAuthMethods();
+        const providers = authMethods.oauth2?.providers || [];
+        const google = providers.find((p) => p.name === "google");
+        if (!google) {
+          return {
+            ok: false,
+            error: "Login com Google não está habilitado no servidor.",
+          };
+        }
+
+        const redirectUrl = `${window.location.origin}/auth/callback`;
+        const cleanCode = inviteCode ? inviteCode.trim().toUpperCase() : "";
+        const pending: PendingOAuth2 = {
+          providerName: "google",
+          state: google.state,
+          codeVerifier: google.codeVerifier,
+          redirectUrl,
+          inviteCode: cleanCode || undefined,
+        };
+        window.sessionStorage.setItem(OAUTH_PENDING_KEY, JSON.stringify(pending));
+
+        const baseAuthUrl = google.authURL || "";
+        window.location.assign(`${baseAuthUrl}${encodeURIComponent(redirectUrl)}`);
+        return { ok: true };
+      } catch (err) {
+        return {
+          ok: false,
+          error: extractPbError(
+            err,
+            "Não foi possível iniciar a autenticação com o Google."
+          ),
+        };
+      }
+    },
+    []
+  );
+
+  const completeGoogleCallback = useCallback(
+    async (
+      code: string,
+      stateParam: string
+    ): Promise<LoginResult & { displayName?: string }> => {
+      const pb = getPocketBase();
+      if (!pb || typeof window === "undefined") {
         return { ok: false, error: "Backend PocketBase não configurado." };
       }
 
-      // Abre o popup sincronamente no clique do usuário sem herdar Cross-Origin-Opener-Policy,
-      // garantindo que popup.close() feche a janela imediatamente após o callback OAuth2.
-      let popup = openGoogleOAuthPopup("about:blank");
-      if (popup) {
-        try {
-          popup.document.write(
-            `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"/><title>Loloverse · Conectando ao Google...</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#FAF8F5;font-family:system-ui,sans-serif;color:#18181B;padding:16px}.card{background:#FFF;border:2px solid #18181B;border-radius:16px;box-shadow:4px 4px 0 #18181B;padding:24px 28px;text-align:center;max-width:360px}.badge{display:inline-block;background:#FACC15;border:2px solid #18181B;border-radius:8px;padding:3px 10px;font-weight:800;font-size:11px;text-transform:uppercase;margin-bottom:10px}h2{margin:0 0 6px;font-size:18px}p{margin:0;font-size:13px;color:#52525B}</style></head><body><div class="card"><div class="badge">Loloverse</div><h2>Conectando ao Google...</h2><p>Aguarde o redirecionamento seguro.</p></div></body></html>`
-          );
-          popup.document.close();
-        } catch {
-          // Ignora se o navegador bloquear escrita inicial
-        }
+      const rawPending = window.sessionStorage.getItem(OAUTH_PENDING_KEY);
+      window.sessionStorage.removeItem(OAUTH_PENDING_KEY);
+
+      if (!rawPending) {
+        return {
+          ok: false,
+          error: "Sessão de login expirada ou já processada. Tente entrar novamente.",
+        };
       }
 
-      const closePopupSafely = () => {
-        try {
-          if (popup && !popup.closed) {
-            popup.close();
-          }
-        } catch {
-          // Ignora erro cross-origin ao fechar
-        }
-      };
+      let pending: PendingOAuth2;
+      try {
+        pending = JSON.parse(rawPending) as PendingOAuth2;
+      } catch {
+        return { ok: false, error: "Dados de retorno inválidos. Tente novamente." };
+      }
+
+      if (!pending.state || pending.state !== stateParam) {
+        return {
+          ok: false,
+          error: "Validação de segurança (state) falhou. Inicie o login novamente.",
+        };
+      }
 
       try {
-        const cleanCode = inviteCode ? inviteCode.trim().toUpperCase() : "";
-        await pb.collection("users").authWithOAuth2({
-          provider: "google",
-          createData: cleanCode ? { inviteCode: cleanCode } : undefined,
-          urlCallback: (url: string) => {
-            if (!popup || popup.closed) {
-              popup = openGoogleOAuthPopup(url);
-            } else {
-              popup.location.replace(url);
-            }
-          },
-        });
-        closePopupSafely();
+        await pb
+          .collection("users")
+          .authWithOAuth2Code(
+            pending.providerName,
+            code,
+            pending.codeVerifier,
+            pending.redirectUrl,
+            pending.inviteCode ? { inviteCode: pending.inviteCode } : undefined
+          );
         await loadFromPocketBase();
-        const name = pb.authStore.record?.displayName || "Bem-vindo(a)";
-        pushToast(`Bem-vindo(a), ${name}!`, "Sessão Google ativa.", "success");
-        return { ok: true };
+        const displayName =
+          String(pb.authStore.record?.displayName || "").trim() || "Bem-vindo(a)";
+        pushToast(`Bem-vindo(a), ${displayName}!`, "Sessão Google ativa.", "success");
+        return { ok: true, displayName };
       } catch (err) {
-        closePopupSafely();
         pb.authStore.clear();
         return {
           ok: false,
           error: extractPbError(
             err,
-            "Não foi possível entrar com o Google. Verifique seu código de convite."
+            "Cadastro bloqueado: verifique se possui um código de convite válido para este e-mail Google."
           ),
         };
       }
@@ -1816,6 +1855,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     persona,
     login,
     loginWithGoogle,
+    completeGoogleCallback,
     verifyInvite,
     generateInvites,
     revokeInvite,
