@@ -126,7 +126,17 @@ interface LoloverseContextValue {
     stateParam: string
   ) => Promise<LoginResult & { displayName?: string }>;
   verifyInvite: (email: string, code: string) => Promise<InviteVerifyResult>;
-  generateInvites: (items: GenerateInviteItem[]) => Promise<InviteRecord[]>;
+  acceptInviteWithPassword: (input: {
+    email: string;
+    code: string;
+    displayName: string;
+    password: string;
+  }) => Promise<LoginResult>;
+  generateInvites: (
+    items: GenerateInviteItem[],
+    options?: { sendEmail?: boolean }
+  ) => Promise<InviteRecord[]>;
+  resendInviteEmail: (inviteId: string) => Promise<void>;
   revokeInvite: (inviteId: string) => Promise<void>;
   refreshData: () => Promise<void>;
   registerAccount: (input: RegisterInput) => LoginResult;
@@ -742,32 +752,92 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     [loadFromPocketBase, persistSession, pushToast]
   );
 
+  const acceptInviteWithPassword = useCallback(
+    async (input: {
+      email: string;
+      code: string;
+      displayName: string;
+      password: string;
+    }): Promise<LoginResult> => {
+      const pb = getPocketBase();
+      if (!pb) return { ok: false, error: "Backend indisponível." };
+      try {
+        const cleanEmail = input.email.trim().toLowerCase();
+        const cleanCode = input.code.trim().toUpperCase();
+        await pb.send("/api/loloverse/invites/accept", {
+          method: "POST",
+          body: {
+            email: cleanEmail,
+            code: cleanCode,
+            displayName: input.displayName.trim(),
+            password: input.password,
+          },
+        });
+        await pb.collection("users").authWithPassword(cleanEmail, input.password);
+        await loadFromPocketBase();
+        pushToast(
+          `Bem-vindo(a), ${input.displayName.trim()}!`,
+          "Conta ativada e senha criada com sucesso.",
+          "success"
+        );
+        return { ok: true };
+      } catch (err) {
+        return {
+          ok: false,
+          error: extractPbError(
+            err,
+            "Não foi possível ativar sua conta. Verifique o convite e a senha."
+          ),
+        };
+      }
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
   const generateInvites = useCallback(
-    async (items: GenerateInviteItem[]): Promise<InviteRecord[]> => {
+    async (
+      items: GenerateInviteItem[],
+      options?: { sendEmail?: boolean }
+    ): Promise<InviteRecord[]> => {
       const pb = getPocketBase();
       if (!pb) return [];
       const createdAll: InviteRecord[] = [];
+      let totalEmailsSent = 0;
+      let lastEmailError = "";
+      const appUrl =
+        typeof window !== "undefined"
+          ? window.location.origin
+          : "https://loloverse.diogolabs.dev.br";
       try {
-        // Fatia automaticamente em blocos de 100 para proteger a VM 1GB
         for (let i = 0; i < items.length; i += 100) {
           const chunk = items.slice(i, i + 100);
-          const res = await pb.send<{ created: InviteRecord[] }>(
-            "/api/loloverse/invites/generate",
-            {
-              method: "POST",
-              body: { invites: chunk },
-            }
-          );
+          const res = await pb.send<{
+            created: InviteRecord[];
+            emailsSent?: number;
+            emailError?: string;
+          }>("/api/loloverse/invites/generate", {
+            method: "POST",
+            body: {
+              invites: chunk,
+              sendEmail: Boolean(options?.sendEmail),
+              appUrl,
+            },
+          });
           if (Array.isArray(res.created)) {
             createdAll.push(...res.created);
           }
+          totalEmailsSent += Number(res.emailsSent || 0);
+          if (res.emailError) lastEmailError = res.emailError;
         }
         await loadFromPocketBase();
-        pushToast(
-          `${createdAll.length} convite(s) gerado(s)!`,
-          "Copie os links ou baixe o CSV.",
-          "success"
-        );
+        const desc = options?.sendEmail
+          ? totalEmailsSent > 0
+            ? `${totalEmailsSent} e-mail(s) enviado(s) automaticamente!`
+            : lastEmailError
+            ? "Convites gerados! Configure o SMTP em Settings → Mail settings ou copie o link."
+            : "Copie os links ou baixe o CSV."
+          : "Copie os links ou baixe o CSV.";
+        pushToast(`${createdAll.length} convite(s) gerado(s)!`, desc, "success");
         return createdAll;
       } catch (err) {
         pushToast(
@@ -779,6 +849,31 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [loadFromPocketBase, pushToast]
+  );
+
+  const resendInviteEmail = useCallback(
+    async (inviteId: string) => {
+      const pb = getPocketBase();
+      if (!pb) return;
+      const appUrl =
+        typeof window !== "undefined"
+          ? window.location.origin
+          : "https://loloverse.diogolabs.dev.br";
+      try {
+        await pb.send(`/api/loloverse/invites/${inviteId}/resend`, {
+          method: "POST",
+          body: { appUrl },
+        });
+        pushToast("E-mail enviado!", "Link de primeiro acesso reenviado.", "success");
+      } catch (err) {
+        pushToast(
+          "Não foi possível enviar e-mail",
+          extractPbError(err, "Verifique o SMTP no PocketBase ou use Copiar Link."),
+          "warning"
+        );
+      }
+    },
+    [pushToast]
   );
 
   const revokeInvite = useCallback(
@@ -1857,7 +1952,9 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     loginWithGoogle,
     completeGoogleCallback,
     verifyInvite,
+    acceptInviteWithPassword,
     generateInvites,
+    resendInviteEmail,
     revokeInvite,
     refreshData,
     registerAccount,

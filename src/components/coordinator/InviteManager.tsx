@@ -8,6 +8,7 @@ import {
   Download,
   FileSpreadsheet,
   KeyRound,
+  Mail,
   MailPlus,
   RefreshCw,
   Upload,
@@ -47,12 +48,14 @@ export function InviteManager() {
     invites,
     isBackendConnected,
     generateInvites,
+    resendInviteEmail,
     revokeInvite,
     refreshData,
   } = useLoloverse();
 
   const [mode, setMode] = useState<"single" | "csv">("single");
   const [busy, setBusy] = useState(false);
+  const [sendEmailAuto, setSendEmailAuto] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Form individual
@@ -161,15 +164,18 @@ export function InviteManager() {
     e.preventDefault();
     if (!email.trim()) return;
     setBusy(true);
-    const created = await generateInvites([
-      {
-        email: email.trim().toLowerCase(),
-        role,
-        classId: role === "coordinator" ? "" : classId || state.classes[0]?.id || "",
-        expiresInDays,
-        note: note.trim(),
-      },
-    ]);
+    const created = await generateInvites(
+      [
+        {
+          email: email.trim().toLowerCase(),
+          role,
+          classId: role === "coordinator" ? "" : classId || state.classes[0]?.id || "",
+          expiresInDays,
+          note: note.trim(),
+        },
+      ],
+      { sendEmail: sendEmailAuto }
+    );
     setBusy(false);
     if (created.length > 0) {
       setEmail("");
@@ -187,7 +193,8 @@ export function InviteManager() {
         classId: r.classId,
         expiresInDays,
         note: r.note,
-      }))
+      })),
+      { sendEmail: sendEmailAuto }
     );
     setBusy(false);
     if (created.length > 0) {
@@ -373,6 +380,16 @@ export function InviteManager() {
                   className="sketch-input"
                 />
               </div>
+
+              <label className="flex items-center gap-2 text-xs font-bold text-zinc-800 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={sendEmailAuto}
+                  onChange={(e) => setSendEmailAuto(e.target.checked)}
+                  className="w-4 h-4 accent-zinc-900"
+                />
+                Enviar link de primeiro acesso por e-mail automaticamente
+              </label>
 
               <button
                 type="submit"
@@ -589,6 +606,14 @@ export function InviteManager() {
 
                     {isActive && (
                       <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => resendInviteEmail(inv.id)}
+                          className="sketch-btn-sm px-2.5 py-1.5 bg-[#3B82F6] text-white text-xs"
+                          title="Enviar link por e-mail"
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleCopyLink(inv)}

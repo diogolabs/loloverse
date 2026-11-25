@@ -48,19 +48,25 @@ export function AuthScreen() {
     login,
     loginWithGoogle,
     verifyInvite,
+    acceptInviteWithPassword,
     registerAccount,
   } = useLoloverse();
 
-  // Produção (PocketBase): 3 abas limpas (Google | Convite | Admin)
-  const [pbTab, setPbTab] = useState<"google" | "invite" | "admin">("google");
+  // Produção (PocketBase): 2 abas simples e limpas (Entrar | Primeiro Acesso)
+  const [pbTab, setPbTab] = useState<"login" | "invite">("login");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+
+  // Primeiro acesso por convite (link ou código)
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [inviteVerified, setInviteVerified] = useState<{
     role: string;
     className?: string;
   } | null>(null);
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteNewPassword, setInviteNewPassword] = useState("");
+  const [inviteConfirmPassword, setInviteConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
   // Modo demonstração local (apenas quando NEXT_PUBLIC_POCKETBASE_URL não está definido)
@@ -77,29 +83,54 @@ export function AuthScreen() {
 
   const [error, setError] = useState<string | null>(null);
 
-  // Lê link direto de convite (?convite=LOLO-...&email=... ou ?aba=convite) automaticamente
+  // Lê link direto de convite (?convite=LOLO-...&email=... ou ?aba=convite) e já pré-valida!
   useEffect(() => {
     if (!isBackendConnected || typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    const qCode = params.get("convite") || params.get("code");
-    const qEmail = params.get("email");
+    const qCode = (params.get("convite") || params.get("code") || "")
+      .trim()
+      .toUpperCase();
+    const qEmail = (params.get("email") || "").trim().toLowerCase();
     const qAba = params.get("aba");
+
     if (qCode) {
-      setInviteCode(qCode.trim().toUpperCase());
+      setInviteCode(qCode);
       setPbTab("invite");
     } else if (qAba === "convite") {
       setPbTab("invite");
     }
     if (qEmail) {
-      setInviteEmail(qEmail.trim().toLowerCase());
+      setInviteEmail(qEmail);
     }
-  }, [isBackendConnected]);
+
+    if (qCode && qEmail) {
+      verifyInvite(qEmail, qCode).then((res) => {
+        if (res.valid) {
+          setInviteVerified({
+            role: res.role || "student",
+            className: res.className,
+          });
+        } else if (res.error) {
+          setError(res.error);
+        }
+      });
+    }
+  }, [isBackendConnected, verifyInvite]);
 
   // --- Handlers Produção (PocketBase) ---
   const handleGoogleLogin = async () => {
     setError(null);
     setBusy(true);
     const res = await loginWithGoogle();
+    setBusy(false);
+    if (!res.ok && res.error) setError(res.error);
+  };
+
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    const res = await login(loginEmail, loginPassword);
     setBusy(false);
     if (!res.ok && res.error) setError(res.error);
   };
@@ -118,19 +149,36 @@ export function AuthScreen() {
     setInviteVerified({ role: res.role || "student", className: res.className });
   };
 
-  const handleGoogleWithInvite = async () => {
+  const handleAcceptWithPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
+    if (inviteName.trim().length < 2) {
+      setError("Informe seu nome completo.");
+      return;
+    }
+    if (inviteNewPassword.length < 8) {
+      setError("A senha precisa ter pelo menos 8 caracteres.");
+      return;
+    }
+    if (inviteNewPassword !== inviteConfirmPassword) {
+      setError("As duas senhas não conferem.");
+      return;
+    }
     setBusy(true);
-    const res = await loginWithGoogle(inviteCode.trim().toUpperCase());
+    const res = await acceptInviteWithPassword({
+      email: inviteEmail,
+      code: inviteCode,
+      displayName: inviteName,
+      password: inviteNewPassword,
+    });
     setBusy(false);
     if (!res.ok && res.error) setError(res.error);
   };
 
-  const handleAdminSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleGoogleWithInvite = async () => {
     setError(null);
     setBusy(true);
-    const res = await login(adminEmail, adminPassword);
+    const res = await loginWithGoogle(inviteCode.trim().toUpperCase());
     setBusy(false);
     if (!res.ok && res.error) setError(res.error);
   };
@@ -187,11 +235,11 @@ export function AuthScreen() {
   };
 
   // ===========================================================================
-  // TELA DE PRODUÇÃO (PocketBase + Google OAuth2 + Convite 1-para-1 + Admin)
+  // TELA DE PRODUÇÃO (PocketBase: E-mail/Senha + Google + Primeiro Acesso Convite)
   // ===========================================================================
   if (isBackendConnected) {
     const rolePt = (r: string) =>
-      r === "teacher" ? "Professor" : r === "coordinator" ? "Coordenador" : "Aluno";
+      r === "teacher" ? "Professor(a)" : r === "coordinator" ? "Coordenador(a)" : "Estudante";
 
     return (
       <div className="min-h-screen flex flex-col justify-center items-center py-8 px-4 sm:px-6">
@@ -242,20 +290,20 @@ export function AuthScreen() {
 
           {/* Card de Autenticação */}
           <div className="sketch-card p-6 bg-white space-y-5">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => {
-                  setPbTab("google");
+                  setPbTab("login");
                   setError(null);
                 }}
-                className={`sketch-btn py-2 text-xs ${
-                  pbTab === "google"
+                className={`sketch-btn py-2.5 text-xs sm:text-sm ${
+                  pbTab === "login"
                     ? "bg-[#FACC15] text-zinc-950"
                     : "bg-white text-zinc-700 hover:bg-amber-50"
                 }`}
               >
-                <LogIn className="w-3.5 h-3.5" />
+                <LogIn className="w-4 h-4" />
                 Entrar
               </button>
               <button
@@ -264,29 +312,14 @@ export function AuthScreen() {
                   setPbTab("invite");
                   setError(null);
                 }}
-                className={`sketch-btn py-2 text-xs ${
+                className={`sketch-btn py-2.5 text-xs sm:text-sm ${
                   pbTab === "invite"
                     ? "bg-[#10B981] text-zinc-950"
                     : "bg-white text-zinc-700 hover:bg-emerald-50"
                 }`}
               >
-                <KeyRound className="w-3.5 h-3.5" />
-                Convite
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPbTab("admin");
-                  setError(null);
-                }}
-                className={`sketch-btn py-2 text-xs ${
-                  pbTab === "admin"
-                    ? "bg-zinc-900 text-[#FACC15]"
-                    : "bg-white text-zinc-700 hover:bg-zinc-100"
-                }`}
-              >
-                <Lock className="w-3.5 h-3.5" />
-                Admin
+                <KeyRound className="w-4 h-4" />
+                Primeiro Acesso
               </button>
             </div>
 
@@ -296,138 +329,9 @@ export function AuthScreen() {
               </div>
             )}
 
-            {pbTab === "google" && (
+            {pbTab === "login" ? (
               <div className="space-y-4">
-                <div>
-                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
-                    Entrar com sua conta Google
-                  </h2>
-                  <p className="text-xs text-zinc-600 mt-1">
-                    Para alunos, professores e coordenadores que já ativaram o convite escolar.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleGoogleLogin}
-                  className="sketch-btn w-full py-3.5 bg-white hover:bg-amber-50 text-zinc-950 text-sm disabled:opacity-50"
-                >
-                  <GoogleIcon />
-                  {busy ? "Conectando..." : "Continuar com Google"}
-                </button>
-
-                <p className="text-[11px] text-center text-zinc-500 font-medium">
-                  Primeiro acesso? Clique na aba{" "}
-                  <button
-                    type="button"
-                    onClick={() => setPbTab("invite")}
-                    className="font-extrabold text-zinc-900 underline"
-                  >
-                    Convite
-                  </button>{" "}
-                  e informe o código enviado pela coordenação.
-                </p>
-              </div>
-            )}
-
-            {pbTab === "invite" && (
-              <div className="space-y-4">
-                <div>
-                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
-                    Primeiro Acesso com Convite
-                  </h2>
-                  <p className="text-xs text-zinc-600 mt-1">
-                    Informe seu e-mail Google e o código exclusivo recebido da escola.
-                  </p>
-                </div>
-
-                <form onSubmit={handleVerifyInvite} className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
-                      Seu E-mail Google
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      value={inviteEmail}
-                      onChange={(e) => {
-                        setInviteEmail(e.target.value);
-                        setInviteVerified(null);
-                      }}
-                      placeholder="nome@gmail.com"
-                      className="sketch-input"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
-                      Código de Convite
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={inviteCode}
-                      onChange={(e) => {
-                        setInviteCode(e.target.value.toUpperCase());
-                        setInviteVerified(null);
-                      }}
-                      placeholder="Ex: LOLO-7K3M-9P2Q"
-                      className="sketch-input font-mono uppercase tracking-wider font-bold"
-                    />
-                  </div>
-
-                  {!inviteVerified ? (
-                    <button
-                      type="submit"
-                      disabled={busy}
-                      className="sketch-btn w-full py-3 bg-[#3B82F6] text-white text-sm disabled:opacity-50"
-                    >
-                      {busy ? "Verificando..." : "Validar Convite"}
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="p-3 rounded-xl bg-emerald-100 border-2 border-zinc-900 text-xs font-bold text-emerald-950 flex items-start gap-2">
-                        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-                        <div>
-                          Convite válido! Cargo:{" "}
-                          <strong>{rolePt(inviteVerified.role)}</strong>
-                          {inviteVerified.className
-                            ? ` · Turma: ${inviteVerified.className}`
-                            : ""}
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={handleGoogleWithInvite}
-                        className="sketch-btn w-full py-3.5 bg-[#10B981] text-zinc-950 text-sm disabled:opacity-50"
-                      >
-                        <GoogleIcon />
-                        {busy
-                          ? "Concluindo cadastro..."
-                          : "Concluir Cadastro com Google"}
-                      </button>
-                    </div>
-                  )}
-                </form>
-              </div>
-            )}
-
-            {pbTab === "admin" && (
-              <form onSubmit={handleAdminSubmit} className="space-y-4">
-                <div>
-                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
-                    Acesso Administrativo
-                  </h2>
-                  <p className="text-xs text-zinc-600 mt-1">
-                    Exclusivo para conta Admin ou e-mails institucionais autorizados fora do Google.
-                  </p>
-                </div>
-
-                <div className="space-y-3">
+                <form onSubmit={handlePasswordLogin} className="space-y-3">
                   <div>
                     <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
                       E-mail ou Usuário
@@ -435,9 +339,9 @@ export function AuthScreen() {
                     <input
                       type="text"
                       required
-                      value={adminEmail}
-                      onChange={(e) => setAdminEmail(e.target.value)}
-                      placeholder="admin@seudominio.com.br"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="seu@email.com"
                       className="sketch-input"
                     />
                   </div>
@@ -449,23 +353,207 @@ export function AuthScreen() {
                     <input
                       type="password"
                       required
-                      value={adminPassword}
-                      onChange={(e) => setAdminPassword(e.target.value)}
-                      placeholder="Sua senha forte"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="Sua senha"
                       className="sketch-input"
                     />
                   </div>
+
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="sketch-btn w-full py-3 bg-[#3B82F6] text-white text-sm disabled:opacity-50"
+                  >
+                    <Lock className="w-4 h-4" />
+                    {busy ? "Entrando..." : "Entrar com E-mail e Senha"}
+                  </button>
+                </form>
+
+                <div className="relative flex items-center py-1">
+                  <div className="flex-grow border-t-2 border-dashed border-zinc-300" />
+                  <span className="mx-3 text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">
+                    ou
+                  </span>
+                  <div className="flex-grow border-t-2 border-dashed border-zinc-300" />
                 </div>
 
                 <button
-                  type="submit"
+                  type="button"
                   disabled={busy}
-                  className="sketch-btn w-full py-3 bg-zinc-900 text-[#FACC15] text-sm disabled:opacity-50"
+                  onClick={handleGoogleLogin}
+                  className="sketch-btn w-full py-3 bg-white hover:bg-amber-50 text-zinc-950 text-sm disabled:opacity-50"
                 >
-                  <ShieldCheck className="w-4 h-4" />
-                  {busy ? "Entrando..." : "Entrar como Admin"}
+                  <GoogleIcon />
+                  {busy ? "Conectando..." : "Continuar com Google"}
                 </button>
-              </form>
+
+                <p className="text-[11px] text-center text-zinc-500 font-medium">
+                  Recebeu um convite da escola? Clique em{" "}
+                  <button
+                    type="button"
+                    onClick={() => setPbTab("invite")}
+                    className="font-extrabold text-zinc-900 underline"
+                  >
+                    Primeiro Acesso
+                  </button>
+                  .
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-hand text-3xl leading-none text-zinc-900">
+                    Ativar Conta com Convite
+                  </h2>
+                  <p className="text-xs text-zinc-600 mt-1">
+                    Informe seu e-mail e a chave recebida — depois escolha criar uma senha ou entrar com o Google.
+                  </p>
+                </div>
+
+                {!inviteVerified ? (
+                  <form onSubmit={handleVerifyInvite} className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                        Seu E-mail Convidado
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        placeholder="nome@email.com"
+                        className="sketch-input"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                        Chave de Acesso (Convite)
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={inviteCode}
+                        onChange={(e) =>
+                          setInviteCode(e.target.value.toUpperCase())
+                        }
+                        placeholder="Ex: PROF-7K3M-9P2Q"
+                        className="sketch-input font-mono uppercase tracking-wider font-bold"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      className="sketch-btn w-full py-3 bg-[#3B82F6] text-white text-sm disabled:opacity-50"
+                    >
+                      {busy ? "Verificando..." : "Validar Convite"}
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </form>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="p-3 rounded-xl bg-emerald-100 border-2 border-zinc-900 text-xs font-bold text-emerald-950 flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                        <div>
+                          Convite validado para <strong>{inviteEmail}</strong>!
+                          <br />
+                          Cargo: <strong>{rolePt(inviteVerified.role)}</strong>
+                          {inviteVerified.className
+                            ? ` · Turma: ${inviteVerified.className}`
+                            : ""}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setInviteVerified(null)}
+                        className="text-[11px] underline shrink-0"
+                      >
+                        Trocar
+                      </button>
+                    </div>
+
+                    {/* Opção 1: Criar senha própria com o link/chave */}
+                    <form onSubmit={handleAcceptWithPassword} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                          Seu Nome Completo
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={inviteName}
+                          onChange={(e) => setInviteName(e.target.value)}
+                          placeholder="Ex: Prof. Rafael Andrade"
+                          className="sketch-input"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                            Criar Senha (mín. 8)
+                          </label>
+                          <input
+                            type="password"
+                            required
+                            minLength={8}
+                            value={inviteNewPassword}
+                            onChange={(e) => setInviteNewPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className="sketch-input"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-extrabold uppercase tracking-wider text-zinc-700 mb-1">
+                            Confirmar Senha
+                          </label>
+                          <input
+                            type="password"
+                            required
+                            minLength={8}
+                            value={inviteConfirmPassword}
+                            onChange={(e) =>
+                              setInviteConfirmPassword(e.target.value)
+                            }
+                            placeholder="••••••••"
+                            className="sketch-input"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={busy}
+                        className="sketch-btn w-full py-3 bg-[#10B981] text-zinc-950 text-sm disabled:opacity-50"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        {busy ? "Ativando conta..." : "Criar Senha & Entrar Agora"}
+                      </button>
+                    </form>
+
+                    <div className="relative flex items-center py-0.5">
+                      <div className="flex-grow border-t-2 border-dashed border-zinc-300" />
+                      <span className="mx-3 text-[11px] font-extrabold uppercase tracking-wider text-zinc-500">
+                        ou ative com Google
+                      </span>
+                      <div className="flex-grow border-t-2 border-dashed border-zinc-300" />
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={handleGoogleWithInvite}
+                      className="sketch-btn w-full py-2.5 bg-white hover:bg-amber-50 text-zinc-950 text-sm disabled:opacity-50"
+                    >
+                      <GoogleIcon />
+                      {busy ? "Redirecionando..." : "Ativar com Conta Google"}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
