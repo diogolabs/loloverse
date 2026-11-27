@@ -11,15 +11,28 @@ import React, {
 } from "react";
 import { INITIAL_STATE } from "@/data/mockData";
 import {
+  BNCC_ATTRIBUTE_KEYS,
+  computeSuggestedRubricScore,
+  createEmptyBnccAttributes,
+  getTopSpecialties,
+  legacyPillarToBncc,
+} from "@/data/bnccAndPaths";
+import {
   extractPbError,
   getPocketBase,
   isPocketBaseEnabled,
   mapCategory,
   mapChannel,
   mapClass,
+  mapDynamicPath,
+  mapGradeComponent,
   mapInvite,
   mapLog,
   mapMessage,
+  mapPathEvaluation,
+  mapPathStep,
+  mapPathSubmission,
+  mapPathTeam,
   mapQuest,
   mapRedemption,
   mapReward,
@@ -32,22 +45,38 @@ import {
   Account,
   ActivityLog,
   AttendanceStatus,
+  AvatarConfig,
   BehaviorPreset,
+  BnccAttributeKey,
+  BnccAttributes,
   ChannelTopic,
+  DynamicPath,
   EngagementPillar,
+  GradeComponent,
   InviteRecord,
   LoloverseState,
+  PathCycle,
+  PathEvaluation,
+  PathGradingMode,
+  PathStatus,
+  PathStep,
+  PathStepFormat,
+  PathStepScope,
+  PathSubmission,
+  PathTeam,
   Persona,
   Quest,
   QuestType,
+  RubricLevel,
   ShopReward,
   Student,
+  StudentFeedEntry,
   StudyRoom,
   ToastItem,
 } from "@/types";
 
-const STORAGE_KEY = "loloverse_mvp_state_v4";
-const SESSION_KEY = "loloverse_session_account_id_v4";
+const STORAGE_KEY = "loloverse_mvp_state_v5";
+const SESSION_KEY = "loloverse_session_account_id_v5";
 const OAUTH_PENDING_KEY = "loloverse_oauth2_pending_v1";
 
 interface PendingOAuth2 {
@@ -67,6 +96,13 @@ const EMPTY_STATE: LoloverseState = {
   classes: [],
   students: [],
   quests: [],
+  dynamicPaths: [],
+  pathSteps: [],
+  pathTeams: [],
+  pathSubmissions: [],
+  pathEvaluations: [],
+  gradeComponents: [],
+  studentFeed: [],
   rewards: [],
   redemptions: [],
   messages: [],
@@ -210,6 +246,67 @@ interface LoloverseContextValue {
     note: string,
     restoreHp?: number
   ) => void;
+  updateAvatarProfile: (
+    studentId: string,
+    avatarConfig: AvatarConfig,
+    roleTitle: string
+  ) => void;
+  createDynamicPath: (input: {
+    classId: string;
+    title: string;
+    drivingQuestion: string;
+    bnccSummary: string;
+    gradingMode: PathGradingMode;
+    gradeWeight: number;
+    culminationDate: string;
+    disciplinaryTitle: string;
+  }) => string | null;
+  addPathStep: (input: {
+    pathId: string;
+    cycle: PathCycle;
+    stepFormat: PathStepFormat;
+    scope: PathStepScope;
+    title: string;
+    description: string;
+    guidingQuestions?: string[];
+    bnccAttr: BnccAttributeKey;
+    requiresEvidence: boolean;
+    dueDate: string;
+  }) => void;
+  advancePathCycle: (pathId: string, nextCycle: PathStatus) => void;
+  createPathTeams: (
+    pathId: string,
+    teams: Array<{
+      name: string;
+      memberIds: string[];
+      roles: Record<string, string>;
+    }>,
+    createStudyRooms?: boolean
+  ) => void;
+  submitPathStep: (input: {
+    pathId: string;
+    stepId: string;
+    studentId: string;
+    teamId?: string;
+    artifactFormat?: string;
+    content: string;
+    attachmentUrl?: string;
+  }) => void;
+  reviewPathSubmission: (
+    submissionId: string,
+    status: PathSubmission["status"],
+    teacherFeedback: string
+  ) => void;
+  evaluateStudentPath: (input: {
+    pathId: string;
+    studentId: string;
+    rigorLevel: RubricLevel;
+    evidenceLevel: RubricLevel;
+    authorshipLevel: RubricLevel;
+    collaborationLevel: RubricLevel;
+    qualitativeNote: string;
+    publishToGradebook?: boolean;
+  }) => void;
   resetDemoData: () => void;
   toasts: ToastItem[];
   dismissToast: (id: string) => void;
@@ -217,6 +314,44 @@ interface LoloverseContextValue {
 }
 
 const LoloverseContext = createContext<LoloverseContextValue | null>(null);
+
+function todayIso(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function boostBnccGrowthOnly(
+  current: BnccAttributes,
+  key: BnccAttributeKey,
+  delta: number,
+  addEvidence = 1
+): BnccAttributes {
+  const prev = current[key] || { value: 0, evidenceCount: 0 };
+  const nextVal = Math.max(prev.value, Math.min(20, prev.value + Math.max(0, delta)));
+  return {
+    ...current,
+    [key]: {
+      value: nextVal,
+      evidenceCount: prev.evidenceCount + Math.max(0, addEvidence),
+    },
+  };
+}
+
+function evaluateAutoBadges(student: Student, triggers?: { submittedPath?: boolean; hybridActive?: boolean; pathCompleted?: boolean }): string[] {
+  const set = new Set(student.badges);
+  if (triggers?.submittedPath) set.add("Autor de Bordo");
+  if (triggers?.hybridActive) set.add("Voz do Espaço Híbrido");
+  if (triggers?.pathCompleted) set.add("Protagonista da Mostra");
+  if (student.streakDays >= 5) set.add("Chama 5 Dias");
+  const hasConsolidado = BNCC_ATTRIBUTE_KEYS.some(
+    (k) => (student.bnccAttributes[k]?.value ?? 0) >= 11
+  );
+  if (hasConsolidado) set.add("Mente Consolidada");
+  return Array.from(set);
+}
 
 function nowLabel(): string {
   const now = new Date();
@@ -324,6 +459,12 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       messageRecs,
       logRecs,
       inviteRecs,
+      pathRecs,
+      stepRecs,
+      teamRecs,
+      submissionRecs,
+      evaluationRecs,
+      gradeCompRecs,
     ] = await Promise.all([
       safeFullList("classes", { sort: "name" }),
       safeFullList("students", { sort: "name" }),
@@ -343,6 +484,12 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       isCoordOrAdmin
         ? safeFullList("invites", { sort: "-created" })
         : Promise.resolve([]),
+      safeFullList("dynamic_paths", { sort: "-created" }),
+      safeFullList("path_steps", { sort: "sortOrder,created" }),
+      safeFullList("path_teams", { sort: "name" }),
+      safeFullList("path_submissions", { sort: "-created" }),
+      safeFullList("path_evaluations", { sort: "-updated" }),
+      safeFullList("grade_components", { sort: "-created" }),
     ]);
 
     const studentByUserId = new Map<string, string>();
@@ -380,6 +527,13 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       quests: questRecs.map((q) =>
         mapQuest(q, completionsByQuest.get(q.id) || [])
       ),
+      dynamicPaths: pathRecs.map(mapDynamicPath),
+      pathSteps: stepRecs.map(mapPathStep),
+      pathTeams: teamRecs.map(mapPathTeam),
+      pathSubmissions: submissionRecs.map(mapPathSubmission),
+      pathEvaluations: evaluationRecs.map(mapPathEvaluation),
+      gradeComponents: gradeCompRecs.map(mapGradeComponent),
+      studentFeed: prev.studentFeed,
       rewards: rewardRecs.map(mapReward),
       redemptions: redemptionRecs.map(mapRedemption),
       studyRooms: roomRecs.map(mapStudyRoom),
@@ -481,6 +635,11 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       "students",
       "quests",
       "quest_completions",
+      "dynamic_paths",
+      "path_steps",
+      "path_teams",
+      "path_submissions",
+      "path_evaluations",
       "shop_rewards",
       "redemptions",
       "study_rooms",
@@ -953,6 +1112,9 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
               onlineStatus: "online",
               studyActivity: "Explorando o Loloverse!",
               pillars: { proposito: 60, maestria: 60, criatividade: 65, social: 60 },
+              bnccAttributes: createEmptyBnccAttributes(),
+              topSpecialties: [],
+              unlockedTitles: ["Aventureiro(a) Maker", "Jovem Cientista"],
               badges: ["Novo no Loloverse"],
               interventionsCount: 0,
             }
@@ -1068,6 +1230,7 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
 
       const target = stateRef.current.students.find((s) => s.id === studentId);
       if (!target) return;
+      const actorName = currentAccountRef.current?.displayName || "Docente";
       setState((prev) => ({
         ...prev,
         students: prev.students.map((s) => {
@@ -1080,16 +1243,68 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
             nextLevel += 1;
             nextXpToNext += 50;
           }
-          return {
+          // Regra inviolável: atributos BNCC NUNCA caem por punição (alertas afetam apenas HP)
+          const nextBncc =
+            preset.type === "positive"
+              ? boostBnccGrowthOnly(s.bnccAttributes, preset.bnccAttr, 1, 1)
+              : s.bnccAttributes;
+          const updated: Student = {
             ...s,
             xp: nextXp,
             level: nextLevel,
             xpToNext: nextXpToNext,
             hp: Math.max(0, Math.min(s.maxHp, s.hp + preset.hpDelta)),
             gold: Math.max(0, s.gold + preset.goldDelta),
+            bnccAttributes: nextBncc,
+            topSpecialties: getTopSpecialties(nextBncc, 2),
           };
+          updated.badges = evaluateAutoBadges(updated);
+          return updated;
         }),
+        studentFeed: [
+          {
+            id: uid("feed"),
+            studentId,
+            timestamp: nowLabel(),
+            title:
+              preset.type === "positive"
+                ? `Pulso da Turma · ${preset.label}`
+                : `Alerta de Rotina · ${preset.label}`,
+            detail:
+              preset.type === "positive"
+                ? `${actorName} reconheceu: ${preset.description}.`
+                : `${actorName} registrou atenção na rotina (atributos BNCC preservados).`,
+            deltaSummary:
+              preset.type === "positive"
+                ? `+${preset.xpDelta} XP · +${preset.goldDelta} Ouro · +1 ${preset.bnccAttr.toUpperCase()}`
+                : `${preset.hpDelta} HP`,
+            variant: (preset.type === "positive" ? "bncc" : "hp") as StudentFeedEntry["variant"],
+          },
+          ...prev.studentFeed,
+        ].slice(0, 80),
+        logs: [
+          {
+            id: uid("log"),
+            timestamp: nowLabel(),
+            actor: actorName,
+            target: target.name,
+            action: `${preset.type === "positive" ? "Concedeu" : "Alerta:"} ${preset.label}`,
+            category: "comportamento" as ActivityLog["category"],
+            deltaSummary:
+              preset.type === "positive"
+                ? `+${preset.xpDelta} XP · +${preset.goldDelta} Ouro`
+                : `${preset.hpDelta} HP`,
+          },
+          ...prev.logs,
+        ].slice(0, 60),
       }));
+      pushToast(
+        preset.label,
+        preset.type === "positive"
+          ? `${target.name} recebeu +${preset.xpDelta} XP e +1 ${preset.bnccAttr.toUpperCase()}`
+          : `${target.name}: ${preset.hpDelta} HP (atributos BNCC preservados)`,
+        preset.type === "positive" ? "success" : "warning"
+      );
     },
     [loadFromPocketBase, pushToast]
   );
@@ -1209,12 +1424,54 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
 
       const quest = stateRef.current.quests.find((q) => q.id === questId);
       if (!quest || quest.completedBy.includes(studentId)) return;
+      const attrKey = quest.bnccAttr || legacyPillarToBncc(quest.pillar);
+      const today = todayIso();
       setState((prev) => ({
         ...prev,
         quests: prev.quests.map((q) =>
           q.id === questId ? { ...q, completedBy: [...q.completedBy, studentId] } : q
         ),
+        students: prev.students.map((s) => {
+          if (s.id !== studentId) return s;
+          let nextXp = s.xp + quest.xpReward;
+          let nextLevel = s.level;
+          let nextXpToNext = s.xpToNext;
+          while (nextXp >= nextXpToNext) {
+            nextXp -= nextXpToNext;
+            nextLevel += 1;
+            nextXpToNext += 50;
+          }
+          const shouldAdvanceStreak = s.lastStreakDate !== today;
+          const nextBncc = boostBnccGrowthOnly(s.bnccAttributes, attrKey, 1, 1);
+          const updated: Student = {
+            ...s,
+            xp: nextXp,
+            level: nextLevel,
+            xpToNext: nextXpToNext,
+            gold: s.gold + quest.goldReward,
+            hp: Math.min(s.maxHp, s.hp + 4),
+            streakDays: shouldAdvanceStreak ? s.streakDays + 1 : s.streakDays,
+            lastStreakDate: today,
+            bnccAttributes: nextBncc,
+            topSpecialties: getTopSpecialties(nextBncc, 2),
+          };
+          updated.badges = evaluateAutoBadges(updated);
+          return updated;
+        }),
+        studentFeed: [
+          {
+            id: uid("feed"),
+            studentId,
+            timestamp: nowLabel(),
+            title: `Missão Concluída · ${quest.title}`,
+            detail: "Recompensa creditada na ficha do personagem.",
+            deltaSummary: `+${quest.xpReward} XP · +${quest.goldReward} Ouro · +4 HP`,
+            variant: "xp" as const,
+          },
+          ...prev.studentFeed,
+        ].slice(0, 80),
       }));
+      pushToast("Missão concluída!", `+${quest.xpReward} XP · +${quest.goldReward} Ouro`, "success");
     },
     [loadFromPocketBase, pushToast]
   );
@@ -1495,25 +1752,50 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
           : acc.role === "admin"
           ? "admin"
           : "aluno";
-      setState((prev) => ({
-        ...prev,
-        messages: [
-          ...prev.messages,
-          {
-            id: uid("msg"),
-            channelId,
-            topicId,
-            authorId: acc.id,
-            authorName: acc.displayName,
-            authorRole,
-            avatarSeed: acc.avatarSeed,
-            avatarColor: acc.avatarColor,
-            content: trimmed,
-            timestamp: nowLabel(),
-            reactions: [],
-          },
-        ],
-      }));
+      const today = todayIso();
+      setState((prev) => {
+        const nextStudents = acc.studentId
+          ? prev.students.map((s) => {
+              if (s.id !== acc.studentId) return s;
+              const usedToday = s.hybridHpDate === today ? s.hybridHpToday || 0 : 0;
+              const gain = usedToday < 8 ? 2 : 0;
+              const nextBncc =
+                gain > 0
+                  ? boostBnccGrowthOnly(s.bnccAttributes, "elo", usedToday === 0 ? 1 : 0, usedToday === 0 ? 1 : 0)
+                  : s.bnccAttributes;
+              const updated: Student = {
+                ...s,
+                hp: Math.min(s.maxHp, s.hp + gain),
+                hybridHpDate: today,
+                hybridHpToday: usedToday + gain,
+                bnccAttributes: nextBncc,
+                topSpecialties: getTopSpecialties(nextBncc, 2),
+              };
+              updated.badges = evaluateAutoBadges(updated, { hybridActive: true });
+              return updated;
+            })
+          : prev.students;
+        return {
+          ...prev,
+          students: nextStudents,
+          messages: [
+            ...prev.messages,
+            {
+              id: uid("msg"),
+              channelId,
+              topicId,
+              authorId: acc.id,
+              authorName: acc.displayName,
+              authorRole,
+              avatarSeed: acc.avatarSeed,
+              avatarColor: acc.avatarColor,
+              content: trimmed,
+              timestamp: nowLabel(),
+              reactions: [],
+            },
+          ],
+        };
+      });
     },
     [loadFromPocketBase, pushToast]
   );
@@ -1930,6 +2212,801 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     [loadFromPocketBase, pushToast]
   );
 
+  // ===========================================================================
+  // OFICINA DO PERSONAGEM & PERCURSO DINÂMICO (AVALIAÇÃO 3D + RUBRICA 4D)
+  // ===========================================================================
+  const updateAvatarProfile = useCallback(
+    (studentId: string, avatarConfig: AvatarConfig, roleTitle: string) => {
+      const cleanTitle = roleTitle.trim() || "Aventureiro(a) Maker";
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send("/api/loloverse/profile/avatar", {
+          method: "POST",
+          body: { avatarConfig, roleTitle: cleanTitle },
+        })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Personagem atualizado!", cleanTitle, "success");
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao salvar personagem",
+              extractPbError(err, "Tente novamente."),
+              "danger"
+            )
+          );
+        return;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        students: prev.students.map((s) =>
+          s.id === studentId
+            ? {
+                ...s,
+                avatarConfig,
+                avatarColor: avatarConfig.bgColor,
+                roleTitle: cleanTitle,
+              }
+            : s
+        ),
+        accounts: prev.accounts.map((a) =>
+          a.studentId === studentId
+            ? {
+                ...a,
+                avatarConfig,
+                avatarColor: avatarConfig.bgColor,
+                bio: cleanTitle,
+              }
+            : a
+        ),
+      }));
+      pushToast("Personagem salvo na Oficina!", cleanTitle, "success");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const createDynamicPath = useCallback(
+    (input: {
+      classId: string;
+      title: string;
+      drivingQuestion: string;
+      bnccSummary: string;
+      gradingMode: PathGradingMode;
+      gradeWeight: number;
+      culminationDate: string;
+      disciplinaryTitle: string;
+    }): string | null => {
+      const cleanTitle = input.title.trim();
+      if (!cleanTitle) return null;
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return null;
+        pb.collection("dynamic_paths")
+          .create({
+            class: input.classId,
+            title: cleanTitle,
+            drivingQuestion: input.drivingQuestion.trim(),
+            bnccSummary: input.bnccSummary.trim(),
+            currentCycle: "ciclo1",
+            gradingMode: input.gradingMode,
+            gradeWeight:
+              input.gradingMode === "formativo"
+                ? 0
+                : Math.max(0, Math.min(100, input.gradeWeight)),
+            culminationDate: input.culminationDate.trim() || "A definir",
+            disciplinaryTitle:
+              input.disciplinaryTitle.trim() || "Jovem Cientista",
+            active: true,
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Percurso Dinâmico criado!", cleanTitle, "success");
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao criar Percurso",
+              extractPbError(err, "Verifique permissões."),
+              "danger"
+            )
+          );
+        return null;
+      }
+
+      const id = uid("path");
+      const newPath: DynamicPath = {
+        id,
+        classId: input.classId,
+        title: cleanTitle,
+        drivingQuestion: input.drivingQuestion.trim(),
+        bnccSummary: input.bnccSummary.trim(),
+        currentCycle: "ciclo1",
+        gradingMode: input.gradingMode,
+        gradeWeight:
+          input.gradingMode === "formativo"
+            ? 0
+            : Math.max(0, Math.min(100, input.gradeWeight)),
+        culminationDate: input.culminationDate.trim() || "A definir",
+        disciplinaryTitle: input.disciplinaryTitle.trim() || "Jovem Cientista",
+        active: true,
+      };
+      setState((prev) => ({
+        ...prev,
+        dynamicPaths: [newPath, ...prev.dynamicPaths],
+        logs: [
+          {
+            id: uid("log"),
+            timestamp: nowLabel(),
+            actor: currentAccountRef.current?.displayName || "Docente",
+            target: cleanTitle,
+            action: `Criou Percurso Dinâmico (${input.gradingMode})`,
+            category: "percurso" as const,
+            deltaSummary:
+              input.gradingMode === "formativo"
+                ? "Formativo (0% nota)"
+                : input.gradingMode === "ponderado"
+                ? `Peso ${newPath.gradeWeight}% opt-in`
+                : `Bônus +${(newPath.gradeWeight / 10).toFixed(1)}`,
+          },
+          ...prev.logs,
+        ].slice(0, 60),
+      }));
+      pushToast("Percurso Dinâmico criado!", cleanTitle, "success");
+      return id;
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const addPathStep = useCallback(
+    (input: {
+      pathId: string;
+      cycle: PathCycle;
+      stepFormat: PathStepFormat;
+      scope: PathStepScope;
+      title: string;
+      description: string;
+      guidingQuestions?: string[];
+      bnccAttr: BnccAttributeKey;
+      requiresEvidence: boolean;
+      dueDate: string;
+    }) => {
+      const cleanTitle = input.title.trim();
+      if (!cleanTitle) return;
+      const existingCount = stateRef.current.pathSteps.filter(
+        (s) => s.pathId === input.pathId
+      ).length;
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("path_steps")
+          .create({
+            path: input.pathId,
+            cycle: input.cycle,
+            stepFormat: input.stepFormat,
+            scope: input.scope,
+            title: cleanTitle,
+            description: input.description.trim(),
+            guidingQuestions: input.guidingQuestions || [],
+            bnccAttr: input.bnccAttr,
+            requiresEvidence: input.requiresEvidence,
+            dueDate: input.dueDate.trim() || "Esta semana",
+            sortOrder: existingCount + 1,
+            status: "aberta",
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Etapa adicionada ao Percurso!", cleanTitle, "success");
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao adicionar etapa",
+              extractPbError(err, "Tente novamente."),
+              "danger"
+            )
+          );
+        return;
+      }
+
+      const newStep: PathStep = {
+        id: uid("step"),
+        pathId: input.pathId,
+        cycle: input.cycle,
+        stepFormat: input.stepFormat,
+        scope: input.scope,
+        title: cleanTitle,
+        description: input.description.trim(),
+        guidingQuestions: input.guidingQuestions,
+        bnccAttr: input.bnccAttr,
+        requiresEvidence: input.requiresEvidence,
+        dueDate: input.dueDate.trim() || "Esta semana",
+        sortOrder: existingCount + 1,
+        status: "aberta",
+      };
+      setState((prev) => ({
+        ...prev,
+        pathSteps: [...prev.pathSteps, newStep],
+      }));
+      pushToast("Etapa adicionada!", cleanTitle, "success");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const advancePathCycle = useCallback(
+    (pathId: string, nextCycle: PathStatus) => {
+      const path = stateRef.current.dynamicPaths.find((p) => p.id === pathId);
+      if (!path) return;
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        const req =
+          nextCycle === "concluido"
+            ? pb.send(`/api/loloverse/paths/${pathId}/culminate`, {
+                method: "POST",
+              })
+            : pb
+                .collection("dynamic_paths")
+                .update(pathId, { currentCycle: nextCycle });
+        req
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(
+              nextCycle === "concluido"
+                ? "Mostra Pública concluída!"
+                : "Ciclo do Percurso atualizado!",
+              path.title,
+              "success"
+            );
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao avançar ciclo",
+              extractPbError(err, "Tente novamente."),
+              "danger"
+            )
+          );
+        return;
+      }
+
+      setState((prev) => {
+        const participantIds = new Set(
+          prev.pathSubmissions
+            .filter((sub) => sub.pathId === pathId)
+            .map((sub) => sub.studentId)
+        );
+        const nextStudents =
+          nextCycle === "concluido"
+            ? prev.students.map((s) => {
+                if (s.classId !== path.classId) return s;
+                if (participantIds.size > 0 && !participantIds.has(s.id)) {
+                  return s;
+                }
+                const nextTitles = Array.from(
+                  new Set([...(s.unlockedTitles || []), path.disciplinaryTitle])
+                );
+                const updated: Student = {
+                  ...s,
+                  unlockedTitles: nextTitles,
+                };
+                updated.badges = evaluateAutoBadges(updated, {
+                  pathCompleted: true,
+                });
+                return updated;
+              })
+            : prev.students;
+
+        return {
+          ...prev,
+          dynamicPaths: prev.dynamicPaths.map((p) =>
+            p.id === pathId ? { ...p, currentCycle: nextCycle } : p
+          ),
+          students: nextStudents,
+        };
+      });
+      pushToast(
+        nextCycle === "concluido"
+          ? `Mostra Pública concluída! Título "${path.disciplinaryTitle}" desbloqueado.`
+          : `Percurso avançado para ${nextCycle === "ciclo2" ? "Ciclo 2 · Criação & Mostra" : "Ciclo 1 · Exploração & Base"}.`,
+        path.title,
+        "success"
+      );
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const createPathTeams = useCallback(
+    (
+      pathId: string,
+      teams: Array<{
+        name: string;
+        memberIds: string[];
+        roles: Record<string, string>;
+      }>,
+      createStudyRooms = true
+    ) => {
+      const path = stateRef.current.dynamicPaths.find((p) => p.id === pathId);
+      if (!path || teams.length === 0) return;
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send(`/api/loloverse/paths/${pathId}/teams`, {
+          method: "POST",
+          body: { teams, createStudyRooms },
+        })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(
+              `${teams.length} equipe(s) organizada(s)!`,
+              createStudyRooms
+                ? "Mesas de Estudo criadas no Espaço Híbrido."
+                : undefined,
+              "success"
+            );
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao salvar equipes",
+              extractPbError(err, "Tente novamente."),
+              "danger"
+            )
+          );
+        return;
+      }
+
+      const palette = ["#FACC15", "#3B82F6", "#10B981", "#8B5CF6", "#FB923C"];
+      const createdRooms: StudyRoom[] = [];
+      const createdTeams: PathTeam[] = teams.map((t, idx) => {
+        let studyRoomId: string | undefined;
+        if (createStudyRooms) {
+          studyRoomId = uid("room");
+          createdRooms.push({
+            id: studyRoomId,
+            name: `${t.name} · Percurso`,
+            topic: path.title,
+            maxSeats: Math.max(4, t.memberIds.length + 1),
+            accentColor: palette[idx % palette.length],
+            participantIds: [],
+          });
+        }
+        return {
+          id: uid("team"),
+          pathId,
+          name: t.name,
+          memberIds: t.memberIds,
+          roles: t.roles,
+          studyRoomId,
+        };
+      });
+
+      setState((prev) => ({
+        ...prev,
+        pathTeams: [
+          ...prev.pathTeams.filter((t) => t.pathId !== pathId),
+          ...createdTeams,
+        ],
+        studyRooms: [...prev.studyRooms, ...createdRooms],
+      }));
+      pushToast(
+        `${createdTeams.length} equipe(s) formada(s)!`,
+        createStudyRooms
+          ? "Mesas de Estudo abertas no Espaço Híbrido."
+          : "Papéis definidos no Percurso Dinâmico.",
+        "success"
+      );
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const submitPathStep = useCallback(
+    (input: {
+      pathId: string;
+      stepId: string;
+      studentId: string;
+      teamId?: string;
+      artifactFormat?: string;
+      content: string;
+      attachmentUrl?: string;
+    }) => {
+      const cleanContent = input.content.trim();
+      if (cleanContent.length < 10) {
+        pushToast(
+          "Evidência muito curta",
+          "Escreva pelo menos 10 caracteres explicando seu raciocínio ou entrega.",
+          "warning"
+        );
+        return;
+      }
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send(`/api/loloverse/paths/steps/${input.stepId}/submit`, {
+          method: "POST",
+          body: {
+            artifactFormat: input.artifactFormat || "",
+            content: cleanContent,
+            attachmentUrl: input.attachmentUrl || "",
+            teamId: input.teamId || "",
+          },
+        })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(
+              "Evidência registrada no Percurso!",
+              "+35 XP · +15 Ouro · +5 HP · Evolução BNCC",
+              "success"
+            );
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao enviar evidência",
+              extractPbError(err, "Tente novamente."),
+              "danger"
+            )
+          );
+        return;
+      }
+
+      const step = stateRef.current.pathSteps.find((s) => s.id === input.stepId);
+      if (!step) return;
+      const today = todayIso();
+      const submission: PathSubmission = {
+        id: uid("sub"),
+        pathId: input.pathId,
+        stepId: input.stepId,
+        studentId: input.studentId,
+        teamId: input.teamId,
+        artifactFormat: input.artifactFormat?.trim() || undefined,
+        content: cleanContent,
+        attachmentUrl: input.attachmentUrl?.trim() || undefined,
+        status: "enviado",
+        timestamp: nowLabel(),
+      };
+
+      setState((prev) => ({
+        ...prev,
+        pathSubmissions: [
+          submission,
+          ...prev.pathSubmissions.filter(
+            (s) =>
+              !(s.stepId === input.stepId && s.studentId === input.studentId)
+          ),
+        ],
+        students: prev.students.map((s) => {
+          if (s.id !== input.studentId) return s;
+          let nextXp = s.xp + 35;
+          let nextLevel = s.level;
+          let nextXpToNext = s.xpToNext;
+          while (nextXp >= nextXpToNext) {
+            nextXp -= nextXpToNext;
+            nextLevel += 1;
+            nextXpToNext += 50;
+          }
+          const shouldAdvanceStreak = s.lastStreakDate !== today;
+          const nextBncc = boostBnccGrowthOnly(
+            s.bnccAttributes,
+            step.bnccAttr,
+            1,
+            1
+          );
+          const updated: Student = {
+            ...s,
+            xp: nextXp,
+            level: nextLevel,
+            xpToNext: nextXpToNext,
+            gold: s.gold + 15,
+            hp: Math.min(s.maxHp, s.hp + 5),
+            deliveryRate: Math.min(100, s.deliveryRate + 2),
+            streakDays: shouldAdvanceStreak ? s.streakDays + 1 : s.streakDays,
+            lastStreakDate: today,
+            bnccAttributes: nextBncc,
+            topSpecialties: getTopSpecialties(nextBncc, 2),
+          };
+          updated.badges = evaluateAutoBadges(updated, { submittedPath: true });
+          return updated;
+        }),
+        studentFeed: [
+          {
+            id: uid("feed"),
+            studentId: input.studentId,
+            timestamp: nowLabel(),
+            title: `Percurso Dinâmico · ${step.title}`,
+            detail: "Evidência registrada e disponível para devolutiva docente.",
+            deltaSummary: `+35 XP · +15 Ouro · +5 HP · +1 ${step.bnccAttr.toUpperCase()}`,
+            variant: "path" as const,
+          },
+          ...prev.studentFeed,
+        ].slice(0, 80),
+      }));
+      pushToast(
+        "Evidência enviada!",
+        `+35 XP · +15 Ouro · +5 HP · +1 ${step.bnccAttr.toUpperCase()}`,
+        "success"
+      );
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const reviewPathSubmission = useCallback(
+    (
+      submissionId: string,
+      status: PathSubmission["status"],
+      teacherFeedback: string
+    ) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("path_submissions")
+          .update(submissionId, {
+            status,
+            teacherFeedback: teacherFeedback.trim(),
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Devolutiva salva!", undefined, "success");
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao salvar devolutiva",
+              extractPbError(err, "Tente novamente."),
+              "danger"
+            )
+          );
+        return;
+      }
+
+      const sub = stateRef.current.pathSubmissions.find(
+        (s) => s.id === submissionId
+      );
+      setState((prev) => ({
+        ...prev,
+        pathSubmissions: prev.pathSubmissions.map((s) =>
+          s.id === submissionId
+            ? { ...s, status, teacherFeedback: teacherFeedback.trim() }
+            : s
+        ),
+        studentFeed: sub
+          ? [
+              {
+                id: uid("feed"),
+                studentId: sub.studentId,
+                timestamp: nowLabel(),
+                title:
+                  status === "validado"
+                    ? "Evidência Validada pelo Professor!"
+                    : "Sugestão de Revisão no Percurso",
+                detail:
+                  teacherFeedback.trim() ||
+                  "Confira a devolutiva na etapa do Percurso Dinâmico.",
+                variant: "path" as const,
+              },
+              ...prev.studentFeed,
+            ].slice(0, 80)
+          : prev.studentFeed,
+      }));
+      pushToast("Devolutiva registrada!", undefined, "success");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const evaluateStudentPath = useCallback(
+    (input: {
+      pathId: string;
+      studentId: string;
+      rigorLevel: RubricLevel;
+      evidenceLevel: RubricLevel;
+      authorshipLevel: RubricLevel;
+      collaborationLevel: RubricLevel;
+      qualitativeNote: string;
+      publishToGradebook?: boolean;
+    }) => {
+      const path = stateRef.current.dynamicPaths.find(
+        (p) => p.id === input.pathId
+      );
+      const student = stateRef.current.students.find(
+        (s) => s.id === input.studentId
+      );
+      if (!path || !student) return;
+
+      const suggestedScore = computeSuggestedRubricScore(input);
+      const shouldPublish =
+        Boolean(input.publishToGradebook) && path.gradingMode !== "formativo";
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send(`/api/loloverse/paths/${input.pathId}/evaluate`, {
+          method: "POST",
+          body: {
+            studentId: input.studentId,
+            rigorLevel: input.rigorLevel,
+            evidenceLevel: input.evidenceLevel,
+            authorshipLevel: input.authorshipLevel,
+            collaborationLevel: input.collaborationLevel,
+            qualitativeNote: input.qualitativeNote.trim(),
+            publishToGradebook: shouldPublish,
+          },
+        })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast(
+              shouldPublish
+                ? "Rubrica salva e lançada no Diário!"
+                : "Rubrica 4D salva (média oficial intacta)!",
+              `${student.name} · Nota sugerida: ${suggestedScore.toFixed(1)}`,
+              "success"
+            );
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao salvar rubrica",
+              extractPbError(err, "Tente novamente."),
+              "danger"
+            )
+          );
+        return;
+      }
+
+      // Mapeia os 4 níveis da rubrica para pisos mínimos na escala RPG 1..20 (crescimento não-punitivo!)
+      const levelFloor: Record<RubricLevel, number> = {
+        1: 4,
+        2: 9,
+        3: 14,
+        4: 18,
+      };
+      const evalRec: PathEvaluation = {
+        id: uid("eval"),
+        pathId: input.pathId,
+        studentId: input.studentId,
+        rigorLevel: input.rigorLevel,
+        evidenceLevel: input.evidenceLevel,
+        authorshipLevel: input.authorshipLevel,
+        collaborationLevel: input.collaborationLevel,
+        suggestedScore,
+        qualitativeNote: input.qualitativeNote.trim() || undefined,
+        publishedToGradebook: shouldPublish,
+        publishedAt: shouldPublish ? nowLabel() : undefined,
+        updatedAt: nowLabel(),
+      };
+
+      setState((prev) => {
+        const nextStudents = prev.students.map((s) => {
+          if (s.id !== input.studentId) return s;
+          // Atributos BNCC evoluem de forma não-punitiva (nunca caem abaixo do atual)
+          const raiseTo = (
+            attrs: BnccAttributes,
+            key: BnccAttributeKey,
+            targetVal: number
+          ): BnccAttributes => {
+            const cur = attrs[key] || { value: 0, evidenceCount: 0 };
+            const nextV = Math.max(
+              cur.value,
+              Math.min(20, Math.max(targetVal, cur.value + (targetVal >= 14 ? 1 : 0)))
+            );
+            return {
+              ...attrs,
+              [key]: { value: nextV, evidenceCount: cur.evidenceCount + 1 },
+            };
+          };
+
+          let attrs = { ...s.bnccAttributes };
+          attrs = raiseTo(attrs, "con", levelFloor[input.rigorLevel]);
+          attrs = raiseTo(attrs, "inv", levelFloor[input.evidenceLevel]);
+          attrs = raiseTo(attrs, "exp", levelFloor[input.authorshipLevel]);
+          attrs = raiseTo(attrs, "elo", levelFloor[input.collaborationLevel]);
+          attrs = raiseTo(
+            attrs,
+            "arg",
+            Math.round(
+              (levelFloor[input.evidenceLevel] +
+                levelFloor[input.collaborationLevel]) /
+                2
+            )
+          );
+
+          // Ponte Opt-In de Nota: só toca bimesterAverage se professor clicou Validar e Lançar
+          let nextAverage = s.bimesterAverage;
+          if (shouldPublish) {
+            if (path.gradingMode === "ponderado" && path.gradeWeight > 0) {
+              const w = Math.min(100, path.gradeWeight) / 100;
+              nextAverage = Number(
+                Math.min(10, Math.max(0, s.bimesterAverage * (1 - w) + suggestedScore * w)).toFixed(1)
+              );
+            } else if (path.gradingMode === "bonus" && path.gradeWeight > 0) {
+              const maxBonus = path.gradeWeight / 10;
+              const earned = Number(((suggestedScore / 10) * maxBonus).toFixed(1));
+              nextAverage = Number(Math.min(10, s.bimesterAverage + earned).toFixed(1));
+            }
+          }
+
+          const updated: Student = {
+            ...s,
+            bimesterAverage: nextAverage,
+            bnccAttributes: attrs,
+            topSpecialties: getTopSpecialties(attrs, 2),
+          };
+          updated.badges = evaluateAutoBadges(updated);
+          return updated;
+        });
+
+        const newGradeComponents: GradeComponent[] = shouldPublish
+          ? [
+              {
+                id: uid("gc"),
+                studentId: input.studentId,
+                bimester: "3º Bimestre",
+                sourceType: path.gradingMode === "bonus" ? "bonus" : "percurso",
+                sourceId: path.id,
+                label: `Percurso: ${path.title}`,
+                score: suggestedScore,
+                weight: path.gradeWeight,
+                timestamp: nowLabel(),
+              },
+              ...prev.gradeComponents,
+            ]
+          : prev.gradeComponents;
+
+        return {
+          ...prev,
+          students: nextStudents,
+          pathEvaluations: [
+            evalRec,
+            ...prev.pathEvaluations.filter(
+              (e) =>
+                !(e.pathId === input.pathId && e.studentId === input.studentId)
+            ),
+          ],
+          gradeComponents: newGradeComponents,
+          studentFeed: [
+            {
+              id: uid("feed"),
+              studentId: input.studentId,
+              timestamp: nowLabel(),
+              title: `Avaliação do Percurso · ${path.title}`,
+              detail:
+                input.qualitativeNote.trim() ||
+                "Rubrica 4D atualizada na sua ficha de atributos BNCC.",
+              deltaSummary: shouldPublish
+                ? `Atributos BNCC atualizados · Lançado no Diário (${suggestedScore.toFixed(1)})`
+                : `Atributos BNCC atualizados · Formativo`,
+              variant: "bncc" as const,
+            },
+            ...prev.studentFeed,
+          ].slice(0, 80),
+          logs: [
+            {
+              id: uid("log"),
+              timestamp: nowLabel(),
+              actor: currentAccountRef.current?.displayName || "Docente",
+              target: student.name,
+              action: shouldPublish
+                ? `Validou Rubrica 4D e lançou no Diário (${path.title})`
+                : `Registrou Rubrica 4D formativa (${path.title})`,
+              category: "avaliacao" as const,
+              deltaSummary: shouldPublish
+                ? `Nota Percurso ${suggestedScore.toFixed(1)} lançada`
+                : `Formativo (${suggestedScore.toFixed(1)} · média intacta)`,
+            },
+            ...prev.logs,
+          ].slice(0, 60),
+        };
+      });
+
+      pushToast(
+        shouldPublish
+          ? "Rubrica validada e lançada no Diário!"
+          : "Rubrica 4D salva (média oficial intacta)!",
+        `${student.name} · Conceito ${suggestedScore.toFixed(1)}`,
+        "success"
+      );
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
   const resetDemoData = useCallback(() => {
     if (isPocketBaseEnabled) return;
     setState(INITIAL_STATE);
@@ -1984,6 +3061,14 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     updateRewardCost,
     createReward,
     registerIntervention,
+    updateAvatarProfile,
+    createDynamicPath,
+    addPathStep,
+    advancePathCycle,
+    createPathTeams,
+    submitPathStep,
+    reviewPathSubmission,
+    evaluateStudentPath,
     resetDemoData,
     toasts,
     dismissToast,

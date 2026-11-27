@@ -42,7 +42,7 @@ routerAdd(
       const nextGold = Math.max(0, student.getInt("gold") + preset.goldDelta);
 
       const pillarField = L.PILLAR_FIELD_MAP[preset.pillar];
-      const pillarDelta = preset.type === "positive" ? 3 : -2;
+      const pillarDelta = preset.type === "positive" ? 3 : 0;
       const nextPillar = L.clamp(student.getInt(pillarField) + pillarDelta, 10, 100);
 
       student.set("xp", prog.xp);
@@ -51,6 +51,12 @@ routerAdd(
       student.set("hp", nextHp);
       student.set("gold", nextGold);
       student.set(pillarField, nextPillar);
+      // Regra inviolável: alertas comportamentais afetam apenas HP, NUNCA reduzem atributos BNCC
+      if (preset.type === "positive") {
+        const bnccKey = L.BEHAVIOR_BNCC_MAP[presetId] || "con";
+        L.boostBnccAttribute(student, bnccKey, 1, 1);
+      }
+      L.syncAutoBadges(student);
       txApp.save(student);
 
       const parts = [];
@@ -219,6 +225,9 @@ routerAdd(
 
       const maxHp = Math.max(1, student.getInt("maxHp") || 100);
       const pillarField = L.PILLAR_FIELD_MAP[quest.getString("pillar")] || "pillarMaestria";
+      const bnccKey = L.PILLAR_TO_BNCC[quest.getString("pillar")] || "con";
+      const today = L.todayIsoDate();
+      const shouldAdvanceStreak = student.getString("lastStreakDate") !== today;
 
       student.set("xp", prog.xp);
       student.set("level", prog.level);
@@ -226,8 +235,13 @@ routerAdd(
       student.set("gold", student.getInt("gold") + goldReward);
       student.set("hp", Math.min(maxHp, student.getInt("hp") + 4));
       student.set("deliveryRate", Math.min(100, student.getFloat("deliveryRate") + 2));
-      student.set("streakDays", student.getInt("streakDays") + 1);
+      if (shouldAdvanceStreak) {
+        student.set("streakDays", student.getInt("streakDays") + 1);
+        student.set("lastStreakDate", today);
+      }
       student.set(pillarField, Math.min(100, student.getInt(pillarField) + 4));
+      L.boostBnccAttribute(student, bnccKey, 1, 1);
+      L.syncAutoBadges(student);
       txApp.save(student);
 
       const qcCol = txApp.findCollectionByNameOrId("quest_completions");

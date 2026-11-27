@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import {
   ClipboardCheck,
+  Compass,
   MapPin,
   MessageSquare,
   Sparkles,
@@ -12,10 +13,11 @@ import {
 import { useLoloverse } from "@/context/LoloverseContext";
 import { AttendancePanel } from "@/components/teacher/AttendancePanel";
 import { ClassroomPulseGrid } from "@/components/teacher/ClassroomPulseGrid";
+import { DynamicPathManager } from "@/components/teacher/DynamicPathManager";
 import { QuestManager } from "@/components/teacher/QuestManager";
 import { HybridSpaceHub } from "@/components/shared/HybridSpaceHub";
 
-type TeacherTab = "pulse" | "attendance" | "quests" | "espaco";
+type TeacherTab = "pulse" | "percurso" | "attendance" | "quests" | "espaco";
 
 export function TeacherView() {
   const { state, currentAccount, setSelectedClassId } = useLoloverse();
@@ -97,6 +99,19 @@ export function TeacherView() {
 
         <button
           type="button"
+          onClick={() => setTab("percurso")}
+          className={`sketch-btn px-4 py-2.5 text-sm ${
+            tab === "percurso"
+              ? "bg-[#8B5CF6] text-white"
+              : "bg-white text-zinc-700 hover:bg-violet-50"
+          }`}
+        >
+          <Compass className="w-4 h-4" />
+          Percurso Dinâmico
+        </button>
+
+        <button
+          type="button"
           onClick={() => setTab("attendance")}
           className={`sketch-btn px-4 py-2.5 text-sm ${
             tab === "attendance"
@@ -138,6 +153,7 @@ export function TeacherView() {
       {/* Active Teacher Workspace */}
       <div>
         {tab === "pulse" && <ClassroomPulseGrid />}
+        {tab === "percurso" && <DynamicPathManager />}
         {tab === "attendance" && <AttendancePanel />}
         {tab === "quests" && <QuestManager />}
         {tab === "espaco" && <HybridSpaceHub classId={selectedClass.id} />}

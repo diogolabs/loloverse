@@ -27,10 +27,36 @@ export function AttentionRadar() {
   const { state, registerIntervention } = useLoloverse();
   const [notes, setNotes] = useState<Record<string, string>>({});
 
+  const hasCycle1Alert = (student: Student) => {
+    const ev = state.pathEvaluations.find((e) => e.studentId === student.id);
+    if (ev && (ev.rigorLevel === 1 || ev.evidenceLevel === 1)) return true;
+    const classPaths = state.dynamicPaths.filter(
+      (p) => p.classId === student.classId && p.active
+    );
+    const individualSteps = state.pathSteps.filter(
+      (st) =>
+        classPaths.some((p) => p.id === st.pathId) &&
+        st.cycle === "ciclo1" &&
+        st.stepFormat === "registro_bordo"
+    );
+    if (individualSteps.length === 0) return false;
+    return individualSteps.some(
+      (st) =>
+        !state.pathSubmissions.some(
+          (sub) => sub.stepId === st.id && sub.studentId === student.id
+        )
+    );
+  };
+
   const atRiskStudents = state.students
     .filter((s) => {
       const gradeDrop = s.previousAverage - s.bimesterAverage;
-      return s.hp <= 55 || s.attendanceRate < 78 || gradeDrop >= 1.0;
+      return (
+        s.hp <= 55 ||
+        s.attendanceRate < 78 ||
+        gradeDrop >= 1.0 ||
+        hasCycle1Alert(s)
+      );
     })
     .sort((a, b) => a.hp - b.hp);
 
@@ -122,6 +148,11 @@ export function AttentionRadar() {
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-extrabold bg-rose-100 text-rose-900 border border-zinc-900 rounded-lg">
                             <TrendingDown className="w-3 h-3" />
                             Queda de Nota (-{gradeDrop})
+                          </span>
+                        )}
+                        {hasCycle1Alert(student) && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-extrabold bg-violet-100 text-violet-950 border border-zinc-900 rounded-lg">
+                            Ciclo 1 · Apoio no Percurso
                           </span>
                         )}
                       </div>

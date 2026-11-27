@@ -97,6 +97,118 @@ const PILLAR_FIELD_MAP = {
   social: "pillarSocial",
 };
 
+const BNCC_KEYS = ["con", "inv", "exp", "dig", "arg", "elo"];
+
+const PILLAR_TO_BNCC = {
+  proposito: "arg",
+  maestria: "con",
+  criatividade: "inv",
+  social: "elo",
+};
+
+const BEHAVIOR_BNCC_MAP = {
+  "bp-colab": "elo",
+  "bp-critico": "inv",
+  "bp-ajudou": "elo",
+  "bp-entrega": "con",
+  "bp-proposito": "arg",
+  "bp-pendente": "con",
+  "bp-foco": "con",
+  "bp-convivencia": "elo",
+};
+
+function todayIsoDate() {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(now.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function readBnccAttributes(student) {
+  const raw = student.get("bnccAttributes");
+  const out = {};
+  for (const k of BNCC_KEYS) {
+    const entry = raw && typeof raw === "object" && !Array.isArray(raw) ? raw[k] : null;
+    if (entry && typeof entry === "object") {
+      out[k] = {
+        value: clamp(Number(entry.value || 0), 0, 20),
+        evidenceCount: Math.max(0, Number(entry.evidenceCount || 0)),
+      };
+    } else {
+      out[k] = { value: 0, evidenceCount: 0 };
+    }
+  }
+  return out;
+}
+
+/** Regra inviolável: atributos BNCC só crescem (0..20), nunca caem por punição. */
+function boostBnccAttribute(student, key, delta, addEvidence) {
+  const k = BNCC_KEYS.indexOf(key) >= 0 ? key : "con";
+  const attrs = readBnccAttributes(student);
+  const prev = attrs[k];
+  const nextVal = Math.max(prev.value, clamp(prev.value + Math.max(0, Number(delta || 0)), 0, 20));
+  attrs[k] = {
+    value: nextVal,
+    evidenceCount: prev.evidenceCount + Math.max(0, Number(addEvidence || 0)),
+  };
+  student.set("bnccAttributes", attrs);
+  student.set("topSpecialties", computeTopSpecialties(attrs, 2));
+  return attrs;
+}
+
+function raiseBnccToFloor(student, key, floorValue) {
+  const k = BNCC_KEYS.indexOf(key) >= 0 ? key : "con";
+  const attrs = readBnccAttributes(student);
+  const prev = attrs[k];
+  const target = clamp(Number(floorValue || 0), 0, 20);
+  const nextVal = Math.max(prev.value, target);
+  attrs[k] = {
+    value: nextVal,
+    evidenceCount: prev.evidenceCount + 1,
+  };
+  student.set("bnccAttributes", attrs);
+  student.set("topSpecialties", computeTopSpecialties(attrs, 2));
+  return attrs;
+}
+
+function computeTopSpecialties(attrs, limit) {
+  return BNCC_KEYS.filter((k) => attrs[k] && attrs[k].value > 0)
+    .sort((a, b) => (attrs[b]?.value || 0) - (attrs[a]?.value || 0))
+    .slice(0, limit || 2);
+}
+
+function syncAutoBadges(student, triggers) {
+  const raw = student.get("badges");
+  const list = Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : [];
+  const add = (label) => {
+    if (list.indexOf(label) === -1) list.push(label);
+  };
+  if (triggers && triggers.submittedPath) add("Autor de Bordo");
+  if (triggers && triggers.hybridActive) add("Voz do Espaço Híbrido");
+  if (triggers && triggers.pathCompleted) add("Protagonista da Mostra");
+  if (student.getInt("streakDays") >= 5) add("Chama 5 Dias");
+  const attrs = readBnccAttributes(student);
+  for (const k of BNCC_KEYS) {
+    if ((attrs[k]?.value || 0) >= 11) {
+      add("Mente Consolidada");
+      break;
+    }
+  }
+  student.set("badges", list);
+  return list;
+}
+
+function computeRubricScore(rigor, evidence, authorship, collab) {
+  const pct = { 1: 25, 2: 55, 3: 85, 4: 100 };
+  const total =
+    (pct[rigor] || 55) * 0.3 +
+    (pct[evidence] || 55) * 0.3 +
+    (pct[authorship] || 55) * 0.2 +
+    (pct[collab] || 55) * 0.2;
+  return Number((total / 10).toFixed(1));
+}
+
 function isSuperuser(auth) {
   return Boolean(auth && typeof auth.isSuperuser === "function" && auth.isSuperuser());
 }
@@ -201,6 +313,16 @@ module.exports = {
   AVATAR_PALETTE,
   BEHAVIOR_PRESETS,
   PILLAR_FIELD_MAP,
+  BNCC_KEYS,
+  PILLAR_TO_BNCC,
+  BEHAVIOR_BNCC_MAP,
+  todayIsoDate,
+  readBnccAttributes,
+  boostBnccAttribute,
+  raiseBnccToFloor,
+  computeTopSpecialties,
+  syncAutoBadges,
+  computeRubricScore,
   isSuperuser,
   getRole,
   requireActiveUser,

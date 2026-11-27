@@ -4,7 +4,142 @@ export type AttendanceStatus = "presente" | "falta" | "atraso";
 
 export type EngagementPillar = "proposito" | "maestria" | "criatividade" | "social";
 
+export type BnccAttributeKey = "con" | "inv" | "exp" | "dig" | "arg" | "elo";
+
+export interface BnccAttributeEntry {
+  /** Escala RPG de crescimento: 0 = A explorar; 1..20 = Em Descoberta -> Referência */
+  value: number;
+  evidenceCount: number;
+}
+
+export type BnccAttributes = Record<BnccAttributeKey, BnccAttributeEntry>;
+
+export interface AvatarConfig {
+  skinIndex: number;
+  hairColorIndex: number;
+  hairStyle: number;
+  hasGlasses: boolean;
+  hasHeadband: boolean;
+  bigSmile: boolean;
+  bgColor: string;
+}
+
 export type QuestType = "diaria" | "tarefa" | "boss";
+
+export type PathCycle = "ciclo1" | "ciclo2";
+
+export type PathStatus = "ciclo1" | "ciclo2" | "concluido";
+
+export type PathGradingMode = "formativo" | "ponderado" | "bonus";
+
+export type PathStepScope = "turma" | "equipe" | "individual";
+
+export type PathStepFormat =
+  | "ponto_partida"
+  | "roda_hipoteses"
+  | "mesa_ideias"
+  | "laboratorio_evidencias"
+  | "roda_conexoes"
+  | "registro_bordo"
+  | "saida_exploratoria"
+  | "encontro_convidado"
+  | "montagem_equipes"
+  | "estudio_equipe"
+  | "estudio_autoral"
+  | "mostra_publica";
+
+export interface DynamicPath {
+  id: string;
+  classId: string;
+  title: string;
+  drivingQuestion: string;
+  bnccSummary: string;
+  currentCycle: PathStatus;
+  gradingMode: PathGradingMode;
+  /** Peso percentual (0..100) quando ponderado, ou teto em décimos (ex: 10 = +1.0) quando bonus */
+  gradeWeight: number;
+  culminationDate: string;
+  disciplinaryTitle: string;
+  active: boolean;
+}
+
+export interface PathStep {
+  id: string;
+  pathId: string;
+  cycle: PathCycle;
+  stepFormat: PathStepFormat;
+  scope: PathStepScope;
+  title: string;
+  description: string;
+  guidingQuestions?: string[];
+  bnccAttr: BnccAttributeKey;
+  requiresEvidence: boolean;
+  dueDate: string;
+  sortOrder: number;
+  status: "aberta" | "concluida";
+}
+
+export interface PathTeam {
+  id: string;
+  pathId: string;
+  name: string;
+  memberIds: string[];
+  roles: Record<string, string>;
+  studyRoomId?: string;
+}
+
+export interface PathSubmission {
+  id: string;
+  pathId: string;
+  stepId: string;
+  studentId: string;
+  teamId?: string;
+  artifactFormat?: string;
+  content: string;
+  attachmentUrl?: string;
+  status: "enviado" | "revisao" | "validado";
+  teacherFeedback?: string;
+  timestamp: string;
+}
+
+export type RubricLevel = 1 | 2 | 3 | 4;
+
+export interface PathEvaluation {
+  id: string;
+  pathId: string;
+  studentId: string;
+  rigorLevel: RubricLevel;
+  evidenceLevel: RubricLevel;
+  authorshipLevel: RubricLevel;
+  collaborationLevel: RubricLevel;
+  suggestedScore: number;
+  qualitativeNote?: string;
+  publishedToGradebook: boolean;
+  publishedAt?: string;
+  updatedAt: string;
+}
+
+export interface GradeComponent {
+  id: string;
+  studentId: string;
+  bimester: string;
+  sourceType: "prova" | "atividade" | "percurso" | "bonus";
+  sourceId?: string;
+  label: string;
+  score: number;
+  weight: number;
+  timestamp: string;
+}
+
+export interface StudentFeedEntry {
+  id: string;
+  studentId: string;
+  timestamp: string;
+  title: string;
+  detail: string;
+  deltaSummary?: string;
+  variant: "xp" | "bncc" | "hp" | "badge" | "path";
+}
 
 export interface InviteRecord {
   id: string;
@@ -31,6 +166,7 @@ export interface Account {
   role: Persona;
   avatarSeed: number;
   avatarColor: string;
+  avatarConfig?: AvatarConfig;
   studentId?: string;
   classId?: string;
   bio?: string;
@@ -71,6 +207,7 @@ export interface ChannelTopic {
   pinned?: boolean;
   resolved?: boolean;
   pillar?: EngagementPillar;
+  bnccAttr?: BnccAttributeKey;
 }
 
 export interface PillarStats {
@@ -86,7 +223,9 @@ export interface Student {
   classId: string;
   avatarSeed: number;
   avatarColor: string;
+  avatarConfig?: AvatarConfig;
   roleTitle: string;
+  unlockedTitles?: string[];
   level: number;
   xp: number;
   xpToNext: number;
@@ -99,9 +238,17 @@ export interface Student {
   previousAverage: number;
   deliveryRate: number;
   streakDays: number;
+  lastStreakDate?: string;
+  hybridHpDate?: string;
+  hybridHpToday?: number;
   onlineStatus: "online" | "estudando" | "em-grupo" | "offline";
   studyActivity?: string;
+  /** Mantido para retrocompatibilidade com registros antigos */
   pillars: PillarStats;
+  /** Nova Ficha RPG: 6 Atributos Avaliativos cobrindo as 10 Competências Gerais da BNCC (escala 0..20) */
+  bnccAttributes: BnccAttributes;
+  /** Exposto a colegas sob LGPD (máximo 2 destaques sem revelar valores baixos) */
+  topSpecialties?: BnccAttributeKey[];
   badges: string[];
   interventionsCount: number;
   lastInterventionNote?: string;
@@ -125,6 +272,7 @@ export interface BehaviorPreset {
   goldDelta: number;
   hpDelta: number;
   pillar: EngagementPillar;
+  bnccAttr: BnccAttributeKey;
   iconName: string;
 }
 
@@ -137,6 +285,7 @@ export interface Quest {
   xpReward: number;
   goldReward: number;
   pillar: EngagementPillar;
+  bnccAttr?: BnccAttributeKey;
   dueDate: string;
   active: boolean;
   completedBy: string[];
@@ -198,6 +347,8 @@ export interface ActivityLog {
     | "comportamento"
     | "frequencia"
     | "quest"
+    | "percurso"
+    | "avaliacao"
     | "loja"
     | "intervencao"
     | "governanca"
@@ -223,6 +374,13 @@ export interface LoloverseState {
   classes: ClassRoom[];
   students: Student[];
   quests: Quest[];
+  dynamicPaths: DynamicPath[];
+  pathSteps: PathStep[];
+  pathTeams: PathTeam[];
+  pathSubmissions: PathSubmission[];
+  pathEvaluations: PathEvaluation[];
+  gradeComponents: GradeComponent[];
+  studentFeed: StudentFeedEntry[];
   rewards: ShopReward[];
   redemptions: RedemptionRecord[];
   messages: ChatMessage[];

@@ -25,7 +25,8 @@ onRecordEnrich((e) => {
     e.record.hide("lastInterventionNote");
     e.record.hide("interventionsCount");
 
-    // Para colegas da mesma turma, oculta indicadores acadêmicos individuais (LGPD escolar)
+    // Para colegas da mesma turma, oculta indicadores acadêmicos individuais e atributos BNCC completos (LGPD escolar)
+    // Mantém visível apenas `topSpecialties` (até 2 pontos fortes) sem revelar atributos baixos
     const isSelf = e.record.getString("user") === auth.id;
     if (!isSelf) {
       e.record.hide("bimesterAverage");
@@ -33,6 +34,10 @@ onRecordEnrich((e) => {
       e.record.hide("attendanceRate");
       e.record.hide("attendanceToday");
       e.record.hide("deliveryRate");
+      e.record.hide("bnccAttributes");
+      e.record.hide("lastStreakDate");
+      e.record.hide("hybridHpDate");
+      e.record.hide("hybridHpToday");
     }
   }
 

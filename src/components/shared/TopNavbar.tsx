@@ -127,6 +127,7 @@ export function TopNavbar() {
               <SketchAvatar
                 seed={currentAccount.avatarSeed}
                 bgColor={currentAccount.avatarColor}
+                config={currentAccount.avatarConfig}
                 size="sm"
               />
               <div className="leading-tight">

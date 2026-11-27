@@ -121,6 +121,7 @@ export function ClassroomPulseGrid() {
                   <SketchAvatar
                     seed={student.avatarSeed}
                     bgColor={student.avatarColor}
+                    config={student.avatarConfig}
                     size="md"
                     statusDot={student.onlineStatus}
                   />
@@ -294,7 +295,7 @@ export function ClassroomPulseGrid() {
                         >
                           <PresetIcon name={preset.iconName} />
                         </div>
-                        <PillarBadge pillar={preset.pillar} compact />
+                        <PillarBadge bnccAttr={preset.bnccAttr} compact />
                       </div>
 
                       <h4 className="font-hand text-xl text-zinc-900 mt-2.5 leading-tight">

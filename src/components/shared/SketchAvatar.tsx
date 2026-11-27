@@ -1,17 +1,42 @@
 "use client";
 
 import React from "react";
+import { AvatarConfig } from "@/types";
 
 interface SketchAvatarProps {
   seed: number;
   bgColor?: string;
+  config?: AvatarConfig;
   size?: "sm" | "md" | "lg" | "xl";
   className?: string;
   statusDot?: "online" | "estudando" | "em-grupo" | "offline";
 }
 
-const SKIN_TONES = ["#FDE2C8", "#F5C6A5", "#D99B78", "#A96E4F", "#7D4E38"];
-const HAIR_COLORS = ["#18181B", "#451A03", "#78350F", "#1E293B", "#581C87"];
+export const AVATAR_SKIN_TONES = [
+  "#FDE2C8",
+  "#F5C6A5",
+  "#D99B78",
+  "#A96E4F",
+  "#7D4E38",
+];
+
+export const AVATAR_HAIR_COLORS = [
+  "#18181B",
+  "#451A03",
+  "#78350F",
+  "#1E293B",
+  "#581C87",
+];
+
+export const AVATAR_BG_COLORS = [
+  "#FACC15",
+  "#10B981",
+  "#3B82F6",
+  "#8B5CF6",
+  "#FB923C",
+  "#EC4899",
+  "#06B6D4",
+];
 
 const SIZE_MAP = {
   sm: "w-9 h-9",
@@ -30,22 +55,31 @@ const STATUS_DOT_COLOR: Record<string, string> = {
 export function SketchAvatar({
   seed,
   bgColor = "#FACC15",
+  config,
   size = "md",
   className = "",
   statusDot,
 }: SketchAvatarProps) {
-  const skin = SKIN_TONES[seed % SKIN_TONES.length];
-  const hair = HAIR_COLORS[(seed * 3) % HAIR_COLORS.length];
-  const hairStyle = seed % 5;
-  const hasGlasses = seed % 3 === 0;
-  const isSmileBig = seed % 2 === 0;
-  const hasHeadband = seed % 4 === 1;
+  const safeSeed = Math.max(0, Math.abs(Math.floor(seed || 1)));
+  const skin =
+    AVATAR_SKIN_TONES[(config?.skinIndex ?? safeSeed) % AVATAR_SKIN_TONES.length];
+  const hair =
+    AVATAR_HAIR_COLORS[
+      (config?.hairColorIndex ?? safeSeed * 3) % AVATAR_HAIR_COLORS.length
+    ];
+  const hairStyle = (config?.hairStyle ?? safeSeed) % 5;
+  const hasGlasses = config ? config.hasGlasses : safeSeed % 3 === 0;
+  const isSmileBig = config ? config.bigSmile : safeSeed % 2 === 0;
+  const hasHeadband = config ? config.hasHeadband : safeSeed % 4 === 1;
+  const resolvedBg = config?.bgColor || bgColor;
 
   return (
-    <div className={`relative inline-flex shrink-0 ${SIZE_MAP[size]} ${className}`}>
+    <div
+      className={`relative inline-flex shrink-0 ${SIZE_MAP[size]} ${className}`}
+    >
       <div
         className="w-full h-full rounded-xl border-2 border-zinc-900 overflow-hidden shadow-[2px_2px_0px_0px_rgba(24,24,27,1)] flex items-center justify-center"
-        style={{ backgroundColor: bgColor }}
+        style={{ backgroundColor: resolvedBg }}
       >
         <svg
           viewBox="0 0 64 64"
@@ -55,7 +89,12 @@ export function SketchAvatar({
           aria-hidden="true"
         >
           {/* Subtle notebook lines behind avatar */}
-          <path d="M0 16H64M0 32H64M0 48H64" stroke="#18181B" strokeOpacity="0.08" strokeWidth="1" />
+          <path
+            d="M0 16H64M0 32H64M0 48H64"
+            stroke="#18181B"
+            strokeOpacity="0.08"
+            strokeWidth="1"
+          />
 
           {/* Shoulders / Shirt */}
           <path
@@ -84,8 +123,22 @@ export function SketchAvatar({
           )}
           {hairStyle === 3 && (
             <>
-              <circle cx="15" cy="24" r="7" fill={hair} stroke="#18181B" strokeWidth="2.5" />
-              <circle cx="49" cy="24" r="7" fill={hair} stroke="#18181B" strokeWidth="2.5" />
+              <circle
+                cx="15"
+                cy="24"
+                r="7"
+                fill={hair}
+                stroke="#18181B"
+                strokeWidth="2.5"
+              />
+              <circle
+                cx="49"
+                cy="24"
+                r="7"
+                fill={hair}
+                stroke="#18181B"
+                strokeWidth="2.5"
+              />
             </>
           )}
 
@@ -102,8 +155,22 @@ export function SketchAvatar({
           />
 
           {/* Ears */}
-          <circle cx="17" cy="31" r="4" fill={skin} stroke="#18181B" strokeWidth="2.2" />
-          <circle cx="47" cy="31" r="4" fill={skin} stroke="#18181B" strokeWidth="2.2" />
+          <circle
+            cx="17"
+            cy="31"
+            r="4"
+            fill={skin}
+            stroke="#18181B"
+            strokeWidth="2.2"
+          />
+          <circle
+            cx="47"
+            cy="31"
+            r="4"
+            fill={skin}
+            stroke="#18181B"
+            strokeWidth="2.2"
+          />
 
           {/* Face */}
           <rect
@@ -183,8 +250,24 @@ export function SketchAvatar({
           {/* Optional Glasses */}
           {hasGlasses && (
             <g stroke="#18181B" strokeWidth="2">
-              <rect x="21.5" y="26.5" width="9.5" height="7" rx="2.5" fill="#FFFFFF" fillOpacity="0.35" />
-              <rect x="33" y="26.5" width="9.5" height="7" rx="2.5" fill="#FFFFFF" fillOpacity="0.35" />
+              <rect
+                x="21.5"
+                y="26.5"
+                width="9.5"
+                height="7"
+                rx="2.5"
+                fill="#FFFFFF"
+                fillOpacity="0.35"
+              />
+              <rect
+                x="33"
+                y="26.5"
+                width="9.5"
+                height="7"
+                rx="2.5"
+                fill="#FFFFFF"
+                fillOpacity="0.35"
+              />
               <line x1="31" y1="30" x2="33" y2="30" />
             </g>
           )}

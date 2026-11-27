@@ -37,6 +37,30 @@ onRecordCreateRequest((e) => {
   }
 
   e.next();
+
+  // Participação construtiva no Espaço Híbrido recupera HP (teto +8 HP/dia) e desbloqueia selo
+  if (L.getRole(auth) === "student") {
+    try {
+      const stu = $app.findFirstRecordByFilter("students", "user = {:uid}", {
+        uid: auth.id,
+      });
+      const today = L.todayIsoDate();
+      const usedToday = stu.getString("hybridHpDate") === today ? stu.getInt("hybridHpToday") : 0;
+      const maxHp = Math.max(1, stu.getInt("maxHp") || 100);
+      if (usedToday < 8) {
+        stu.set("hp", Math.min(maxHp, stu.getInt("hp") + 2));
+        stu.set("hybridHpDate", today);
+        stu.set("hybridHpToday", usedToday + 2);
+        if (usedToday === 0) {
+          L.boostBnccAttribute(stu, "elo", 1, 1);
+        }
+      }
+      L.syncAutoBadges(stu, { hybridActive: true });
+      $app.save(stu);
+    } catch {
+      // Ignora caso não exista ficha vinculada
+    }
+  }
 }, "chat_messages");
 
 // -----------------------------------------------------------------------------

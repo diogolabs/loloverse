@@ -9,6 +9,7 @@ import {
   Users,
 } from "lucide-react";
 import { useLoloverse } from "@/context/LoloverseContext";
+import { computeAverageBnccIndex } from "@/data/bnccAndPaths";
 
 export function ExecutiveKpis() {
   const { state } = useLoloverse();
@@ -22,18 +23,12 @@ export function ExecutiveKpis() {
     state.students.reduce((acc, s) => acc + s.deliveryRate, 0) / totalStudents
   );
 
-  const avgEngagement = Math.round(
+  const avgBnccIndex = (
     state.students.reduce(
-      (acc, s) =>
-        acc +
-        (s.pillars.proposito +
-          s.pillars.maestria +
-          s.pillars.criatividade +
-          s.pillars.social) /
-          4,
+      (acc, s) => acc + computeAverageBnccIndex(s.bnccAttributes),
       0
     ) / totalStudents
-  );
+  ).toFixed(1);
 
   const totalGoldInCirculation = state.students.reduce(
     (acc, s) => acc + s.gold,
@@ -54,9 +49,9 @@ export function ExecutiveKpis() {
       icon: <Users className="w-5 h-5" />,
     },
     {
-      label: "Índice de Engajamento",
-      value: `${avgEngagement}/100`,
-      sub: "Média das 4 competências da escola",
+      label: "Índice BNCC (Ficha RPG)",
+      value: `${avgBnccIndex}/20`,
+      sub: "Média dos 6 atributos BNCC explorados",
       bg: "bg-violet-100",
       iconBg: "bg-[#8B5CF6] text-white",
       icon: <Sparkles className="w-5 h-5" />,

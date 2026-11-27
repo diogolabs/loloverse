@@ -4,11 +4,22 @@ import {
   ChannelCategory,
   ChannelTopic,
   ChatChannel,
-  LoloverseState,
+  DynamicPath,
   EngagementPillar,
+  GradeComponent,
+  LoloverseState,
+  PathEvaluation,
+  PathStep,
+  PathSubmission,
+  PathTeam,
   Student,
+  StudentFeedEntry,
   StudyRoom,
 } from "@/types";
+import {
+  deriveBnccFromPillars,
+  getTopSpecialties,
+} from "@/data/bnccAndPaths";
 
 export const PILLAR_META: Record<
   EngagementPillar,
@@ -70,6 +81,7 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
     goldDelta: 5,
     hpDelta: 0,
     pillar: "social",
+    bnccAttr: "elo",
     iconName: "Users",
   },
   {
@@ -81,6 +93,7 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
     goldDelta: 8,
     hpDelta: 0,
     pillar: "criatividade",
+    bnccAttr: "inv",
     iconName: "Lightbulb",
   },
   {
@@ -92,6 +105,7 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
     goldDelta: 10,
     hpDelta: 5,
     pillar: "social",
+    bnccAttr: "elo",
     iconName: "HeartHandshake",
   },
   {
@@ -103,55 +117,60 @@ export const BEHAVIOR_PRESETS: BehaviorPreset[] = [
     goldDelta: 12,
     hpDelta: 5,
     pillar: "maestria",
+    bnccAttr: "con",
     iconName: "Award",
   },
   {
     id: "bp-proposito",
-    label: "Liderança Maker",
-    description: "Engajou a turma no propósito da Feira de Ciências",
+    label: "Argumento & Liderança",
+    description: "Sustentou ideias com evidências e engajou a turma",
     type: "positive",
     xpDelta: 20,
     goldDelta: 10,
     hpDelta: 0,
     pillar: "proposito",
+    bnccAttr: "arg",
     iconName: "Compass",
   },
   {
     id: "bp-pendente",
     label: "Atividade Pendente",
-    description: "Não entregou tarefa combinada no prazo",
+    description: "Não entregou tarefa combinada no prazo (afeta apenas HP)",
     type: "alert",
     xpDelta: 0,
     goldDelta: 0,
     hpDelta: -10,
     pillar: "maestria",
+    bnccAttr: "con",
     iconName: "FileWarning",
   },
   {
     id: "bp-foco",
     label: "Falta de Foco",
-    description: "Dispersão recorrente durante a explicação prática",
+    description: "Dispersão recorrente durante a aula prática (afeta apenas HP)",
     type: "alert",
     xpDelta: 0,
     goldDelta: 0,
     hpDelta: -5,
     pillar: "maestria",
+    bnccAttr: "con",
     iconName: "EyeOff",
   },
   {
     id: "bp-convivencia",
     label: "Desrespeito ao Combinado",
-    description: "Interrompeu colegas ou descumpriu regras do laboratório",
+    description: "Interrompeu colegas ou descumpriu regras do laboratório (afeta apenas HP)",
     type: "alert",
     xpDelta: 0,
     goldDelta: 0,
     hpDelta: -12,
     pillar: "social",
+    bnccAttr: "elo",
     iconName: "ShieldAlert",
   },
 ];
 
-const INITIAL_STUDENTS: Student[] = [
+const RAW_INITIAL_STUDENTS: Omit<Student, "bnccAttributes" | "topSpecialties" | "unlockedTitles">[] = [
   // 8º Ano A - Robótica & Maker
   {
     id: "stu-sofia",
@@ -532,6 +551,23 @@ const INITIAL_STUDENTS: Student[] = [
   },
 ];
 
+const INITIAL_STUDENTS: Student[] = RAW_INITIAL_STUDENTS.map((raw) => {
+  const attrs = deriveBnccFromPillars(raw.pillars);
+  // Demonstra o estado neutro "A explorar" em competências ainda sem evidência em perfis iniciais
+  if (raw.id === "stu-pedro" || raw.id === "stu-davi") {
+    attrs.exp = { value: 0, evidenceCount: 0 };
+  }
+  if (raw.id === "stu-enzo") {
+    attrs.dig = { value: 0, evidenceCount: 0 };
+  }
+  return {
+    ...raw,
+    bnccAttributes: attrs,
+    topSpecialties: getTopSpecialties(attrs, 2),
+    unlockedTitles: [raw.roleTitle, "Aventureiro(a) Maker", "Jovem Cientista"],
+  };
+});
+
 function slugifyFirstName(name: string): string {
   return name
     .split(" ")[0]
@@ -715,12 +751,352 @@ const INITIAL_TOPICS: ChannelTopic[] = [
   },
 ];
 
+const INITIAL_DYNAMIC_PATHS: DynamicPath[] = [
+  {
+    id: "path-8a-coleta",
+    classId: "class-8a",
+    title: "Sensor Inteligente para Coleta Seletiva Escolar",
+    drivingQuestion:
+      "Como usar automação simples e dados reais da escola para reduzir o descarte incorreto de resíduos no pátio?",
+    bnccSummary: "EF08CI05 · EF08MA23 · Competências Gerais 1, 2, 5, 7 e 9",
+    currentCycle: "ciclo2",
+    gradingMode: "ponderado",
+    gradeWeight: 30,
+    culminationDate: "Sexta, 14h · Mostra no Pátio",
+    disciplinaryTitle: "Engenheiro(a) Maker",
+    active: true,
+  },
+  {
+    id: "path-9b-horta",
+    classId: "class-9b",
+    title: "Horta Autossustentável & Qualidade do Solo",
+    drivingQuestion:
+      "Qual plano de irrigação e correção de solo garante maior produção na horta escolar com água reaproveitada?",
+    bnccSummary: "EF09CI13 · Competências Gerais 1, 2, 7 e 10",
+    currentCycle: "ciclo1",
+    gradingMode: "formativo",
+    gradeWeight: 0,
+    culminationDate: "Próxima Quinta, 10h",
+    disciplinaryTitle: "Jovem Cientista",
+    active: true,
+  },
+  {
+    id: "path-1em-impacto",
+    classId: "class-1em",
+    title: "Solução Digital para Problemas do Bairro",
+    drivingQuestion:
+      "Que protótipo digital acessível resolve uma dor real observada na comunidade ao redor da escola?",
+    bnccSummary: "EM13CNT306 · EM13LGG703 · Competências Gerais 2, 4, 5 e 6",
+    currentCycle: "ciclo1",
+    gradingMode: "bonus",
+    gradeWeight: 10,
+    culminationDate: "Dia 18 · Vitrine de Soluções",
+    disciplinaryTitle: "Autor(a) Digital",
+    active: true,
+  },
+];
+
+const INITIAL_PATH_STEPS: PathStep[] = [
+  {
+    id: "step-8a-1",
+    pathId: "path-8a-coleta",
+    cycle: "ciclo1",
+    stepFormat: "ponto_partida",
+    scope: "turma",
+    title: "Mapa de Resíduos & Princípios de Sensores",
+    description:
+      "Leitura breve dos dados de lixo da escola e demonstração do sensor ultrassônico HC-SR04.",
+    guidingQuestions: [
+      "Quais resíduos mais se misturam hoje no pátio?",
+    ],
+    bnccAttr: "con",
+    requiresEvidence: false,
+    dueDate: "Segunda",
+    sortOrder: 1,
+    status: "concluida",
+  },
+  {
+    id: "step-8a-2",
+    pathId: "path-8a-coleta",
+    cycle: "ciclo1",
+    stepFormat: "saida_exploratoria",
+    scope: "equipe",
+    title: "Auditoria Visual das Lixeiras do Pátio",
+    description:
+      "Observação de 15 minutos após o intervalo registrando volume e erros de separação.",
+    guidingQuestions: [
+      "O que a observação no pátio revelou que não imaginávamos em sala?",
+    ],
+    bnccAttr: "inv",
+    requiresEvidence: true,
+    dueDate: "Terça",
+    sortOrder: 2,
+    status: "concluida",
+  },
+  {
+    id: "step-8a-3",
+    pathId: "path-8a-coleta",
+    cycle: "ciclo1",
+    stepFormat: "registro_bordo",
+    scope: "individual",
+    title: "Registro de Bordo Individual: Diagnóstico & Lógica",
+    description:
+      "Cada estudante registra sua própria explicação sobre qual lógica de alerta (LED/som) resolve melhor o problema observado.",
+    guidingQuestions: [
+      "Qual dado coletado no pátio sustenta sua proposta?",
+      "Como o algoritmo decide quando acender o alerta?",
+    ],
+    bnccAttr: "con",
+    requiresEvidence: true,
+    dueDate: "Quarta, 18h",
+    sortOrder: 3,
+    status: "aberta",
+  },
+  {
+    id: "step-8a-4",
+    pathId: "path-8a-coleta",
+    cycle: "ciclo1",
+    stepFormat: "roda_conexoes",
+    scope: "turma",
+    title: "Roda de Conexões: Comparando Evidências",
+    description:
+      "Confronto respeitoso das soluções levantadas antes de abrir os estúdios do Ciclo 2.",
+    guidingQuestions: [
+      "Sua equipe concorda com o diagnóstico da outra bancada? Por quê?",
+      "Alguém encontrou evidências diferentes no pátio?",
+      "O que vocês ajustariam no circuito após ouvir os colegas?",
+    ],
+    bnccAttr: "arg",
+    requiresEvidence: true,
+    dueDate: "Quinta, 10h",
+    sortOrder: 4,
+    status: "aberta",
+  },
+  {
+    id: "step-8a-5",
+    pathId: "path-8a-coleta",
+    cycle: "ciclo2",
+    stepFormat: "estudio_equipe",
+    scope: "equipe",
+    title: "Estúdio em Equipe: Protótipo Funcional da Lixeira",
+    description:
+      "Montar o circuito com Arduino/Tinkercad e estruturar o painel explicativo de evidências.",
+    guidingQuestions: [
+      "Como o protótipo incorpora os ajustes sugeridos na Roda de Conexões?",
+    ],
+    bnccAttr: "dig",
+    requiresEvidence: true,
+    dueDate: "Sexta, 12h",
+    sortOrder: 5,
+    status: "aberta",
+  },
+  {
+    id: "step-8a-6",
+    pathId: "path-8a-coleta",
+    cycle: "ciclo2",
+    stepFormat: "mostra_publica",
+    scope: "turma",
+    title: "Mostra Pública: Defesa no Pátio Escolar",
+    description:
+      "Apresentação para colegas de outras turmas explicando raciocínio, dados e decisões técnicas.",
+    guidingQuestions: [
+      "Qual evidência torna a solução de vocês convincente para toda a escola?",
+    ],
+    bnccAttr: "exp",
+    requiresEvidence: true,
+    dueDate: "Sexta, 14h",
+    sortOrder: 6,
+    status: "aberta",
+  },
+  {
+    id: "step-9b-1",
+    pathId: "path-9b-horta",
+    cycle: "ciclo1",
+    stepFormat: "roda_hipoteses",
+    scope: "turma",
+    title: "Por que algumas mudas murcham mais rápido?",
+    description:
+      "Levantamento inicial de hipóteses sobre pH, drenagem e insolação na horta da escola.",
+    bnccAttr: "inv",
+    requiresEvidence: true,
+    dueDate: "Hoje, 17h",
+    sortOrder: 1,
+    status: "aberta",
+  },
+  {
+    id: "step-9b-2",
+    pathId: "path-9b-horta",
+    cycle: "ciclo1",
+    stepFormat: "registro_bordo",
+    scope: "individual",
+    title: "Registro de Bordo: Tabela Individual de pH",
+    description:
+      "Analise os resultados de 3 amostras do canteiro e justifique qual correção é mais adequada.",
+    bnccAttr: "con",
+    requiresEvidence: true,
+    dueDate: "Quinta, 16h",
+    sortOrder: 2,
+    status: "aberta",
+  },
+];
+
+const INITIAL_PATH_TEAMS: PathTeam[] = [
+  {
+    id: "team-8a-alfa",
+    pathId: "path-8a-coleta",
+    name: "Equipe Bancada Alfa",
+    memberIds: ["stu-sofia", "stu-lucas", "stu-gabriel", "stu-enzo"],
+    roles: {
+      "stu-sofia": "Designer do Artefato",
+      "stu-lucas": "Investigador(a) de Fontes",
+      "stu-gabriel": "Relator(a) de Síntese",
+      "stu-enzo": "Apresentador(a) de Defesa",
+    },
+    studyRoomId: "room-robotica",
+  },
+  {
+    id: "team-8a-beta",
+    pathId: "path-8a-coleta",
+    name: "Equipe Bancada Beta",
+    memberIds: ["stu-beatriz", "stu-mariana", "stu-lara", "stu-pedro"],
+    roles: {
+      "stu-beatriz": "Mediador(a) & Prazos",
+      "stu-mariana": "Designer do Artefato",
+      "stu-lara": "Relator(a) de Síntese",
+      "stu-pedro": "Investigador(a) de Fontes",
+    },
+  },
+];
+
+const INITIAL_PATH_SUBMISSIONS: PathSubmission[] = [
+  {
+    id: "sub-sofia-3",
+    pathId: "path-8a-coleta",
+    stepId: "step-8a-3",
+    studentId: "stu-sofia",
+    teamId: "team-8a-alfa",
+    artifactFormat: "Texto + Esquema de Lógica",
+    content:
+      "Na auditoria do pátio contamos 18 embalagens plásticas na lixeira orgânica em 15 minutos. Minha lógica usa o sensor HC-SR04 a 25 cm para acender um LED verde na tampa reciclável junto com um ícone visual grande.",
+    status: "validado",
+    teacherFeedback:
+      "Excelente articulação entre o dado coletado no pátio e a decisão de projeto do circuito!",
+    timestamp: "Hoje, 09:20",
+  },
+  {
+    id: "sub-beatriz-3",
+    pathId: "path-8a-coleta",
+    stepId: "step-8a-3",
+    studentId: "stu-beatriz",
+    teamId: "team-8a-beta",
+    artifactFormat: "Síntese Individual",
+    content:
+      "Percebemos que o erro aumenta nos últimos 3 minutos do recreio por pressa. Proponho código com sinal sonoro breve apenas quando a distância cair abaixo de 15 cm para não gerar ruído excessivo.",
+    status: "validado",
+    teacherFeedback: "Análise cuidadosa de contexto e conforto sonoro. Ótimo rigor!",
+    timestamp: "Hoje, 08:55",
+  },
+  {
+    id: "sub-lucas-3",
+    pathId: "path-8a-coleta",
+    stepId: "step-8a-3",
+    studentId: "stu-lucas",
+    teamId: "team-8a-alfa",
+    artifactFormat: "Diagrama de Pinos",
+    content:
+      "Testei os pinos Trig (9) e Echo (10) evitando leituras falsas com média de 3 pulsos consecutivos antes de acionar o LED.",
+    status: "enviado",
+    timestamp: "Hoje, 10:05",
+  },
+];
+
+const INITIAL_PATH_EVALUATIONS: PathEvaluation[] = [
+  {
+    id: "eval-sofia-8a",
+    pathId: "path-8a-coleta",
+    studentId: "stu-sofia",
+    rigorLevel: 4,
+    evidenceLevel: 4,
+    authorshipLevel: 3,
+    collaborationLevel: 3,
+    suggestedScore: 9.4,
+    qualitativeNote:
+      "Ótima autonomia técnica e uso consistente das medições do pátio. Na Mostra Pública, destaque também os testes que falharam antes do acerto.",
+    publishedToGradebook: false,
+    updatedAt: "Hoje, 09:40",
+  },
+  {
+    id: "eval-pedro-8a",
+    pathId: "path-8a-coleta",
+    studentId: "stu-pedro",
+    rigorLevel: 1,
+    evidenceLevel: 2,
+    authorshipLevel: 1,
+    collaborationLevel: 2,
+    suggestedScore: 4.0,
+    qualitativeNote:
+      "Pedro faltou na semana da auditoria e ainda não enviou o Registro de Bordo individual. Agendar acolhimento no Espaço Híbrido antes do Estúdio.",
+    publishedToGradebook: false,
+    updatedAt: "Ontem, 17:10",
+  },
+];
+
+const INITIAL_GRADE_COMPONENTS: GradeComponent[] = [
+  {
+    id: "gc-sofia-prova",
+    studentId: "stu-sofia",
+    bimester: "3º Bimestre",
+    sourceType: "prova",
+    label: "Avaliação Bimestral Regular",
+    score: 9.1,
+    weight: 70,
+    timestamp: "Semana passada",
+  },
+];
+
+const INITIAL_STUDENT_FEED: StudentFeedEntry[] = [
+  {
+    id: "feed-sofia-1",
+    studentId: "stu-sofia",
+    timestamp: "Hoje, 10:15",
+    title: "Pulso da Turma · Pensamento Crítico",
+    detail: "Prof. Rafael Andrade reconheceu sua pergunta em sala.",
+    deltaSummary: "+20 XP · +8 Ouro · +1 INV",
+    variant: "bncc",
+  },
+  {
+    id: "feed-sofia-2",
+    studentId: "stu-sofia",
+    timestamp: "Hoje, 09:40",
+    title: "Devolutiva do Percurso Dinâmico",
+    detail: "Seu Registro de Bordo foi validado com destaque em Evidências.",
+    deltaSummary: "+1 CON · +1 INV",
+    variant: "path",
+  },
+  {
+    id: "feed-pedro-1",
+    studentId: "stu-pedro",
+    timestamp: "Hoje, 08:30",
+    title: "Atenção na Rotina",
+    detail: "Falta registrada — participe do Espaço Híbrido ou envie seu Registro de Bordo para recuperar HP!",
+    deltaSummary: "-5 HP (atributos BNCC preservados)",
+    variant: "hp",
+  },
+];
+
 export const INITIAL_STATE: LoloverseState = {
   accounts: INITIAL_ACCOUNTS,
   studyRooms: INITIAL_STUDY_ROOMS,
   categories: INITIAL_CATEGORIES,
   channels: INITIAL_CHANNELS,
   topics: INITIAL_TOPICS,
+  dynamicPaths: INITIAL_DYNAMIC_PATHS,
+  pathSteps: INITIAL_PATH_STEPS,
+  pathTeams: INITIAL_PATH_TEAMS,
+  pathSubmissions: INITIAL_PATH_SUBMISSIONS,
+  pathEvaluations: INITIAL_PATH_EVALUATIONS,
+  gradeComponents: INITIAL_GRADE_COMPONENTS,
+  studentFeed: INITIAL_STUDENT_FEED,
   selectedClassId: "class-8a",
   activeStudentId: "stu-sofia",
   classes: [
@@ -870,11 +1246,11 @@ export const INITIAL_STATE: LoloverseState = {
       redeemedCount: 9,
     },
     {
-      id: "rew-folga-tarefa",
-      title: "Passe Livre: 1 Tarefa de Casa",
+      id: "rew-tema-desafio",
+      title: "Escolher Tema do Desafio Extra",
       description:
-        "Dispensa de 1 lista de exercícios opcional (não acumulativo em semanas de avaliação).",
-      cost: 120,
+        "Propor o tema ou formato criativo do próximo desafio bônus da turma junto com o professor.",
+      cost: 110,
       category: "privilegio",
       iconName: "Ticket",
       approved: true,
