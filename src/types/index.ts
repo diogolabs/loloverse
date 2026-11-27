@@ -1,5 +1,41 @@
 export type Persona = "teacher" | "student" | "coordinator" | "admin";
 
+export type SchoolSegment = "infantil" | "fund1" | "fund2" | "em" | "todos";
+
+export type WorkShift = "Manhã" | "Tarde" | "Noite" | "Integral" | "Todos";
+
+export type GradingFormulaType = "aritmetica" | "ponderada" | "recuperacao_substitutiva";
+
+export type RoundingRule = "decimo" | "meio_ponto" | "exato";
+
+export interface GradingPolicy {
+  id: string;
+  name: string;
+  segment: SchoolSegment;
+  termSystem: "bimestral" | "trimestral";
+  formulaType: GradingFormulaType;
+  passingGrade: number;
+  weightExams: number;
+  weightActivities: number;
+  weightDynamicPaths: number;
+  rounding: RoundingRule;
+  active: boolean;
+}
+
+export type WeekDay = "seg" | "ter" | "qua" | "qui" | "sex";
+
+export interface ScheduleSlot {
+  id: string;
+  classId: string;
+  dayOfWeek: WeekDay;
+  slotIndex: number; // 1..6
+  subject: string;
+  teacherId?: string;
+  teacherName: string;
+  room: string;
+  bnccFocus?: BnccAttributeKey;
+}
+
 export type AttendanceStatus = "presente" | "falta" | "atraso";
 
 export type EngagementPillar = "proposito" | "maestria" | "criatividade" | "social";
@@ -169,6 +205,10 @@ export interface Account {
   avatarConfig?: AvatarConfig;
   studentId?: string;
   classId?: string;
+  segment?: SchoolSegment;
+  workShift?: WorkShift;
+  active?: boolean;
+  allowPasswordLogin?: boolean;
   bio?: string;
 }
 
@@ -256,11 +296,15 @@ export interface Student {
 
 export interface ClassRoom {
   id: string;
+  code?: string;
   name: string;
   grade: string;
+  segment: SchoolSegment;
+  teacherId?: string;
   teacherName: string;
-  period: string;
+  period: WorkShift;
   room: string;
+  active?: boolean;
 }
 
 export interface BehaviorPreset {
@@ -380,6 +424,8 @@ export interface LoloverseState {
   pathSubmissions: PathSubmission[];
   pathEvaluations: PathEvaluation[];
   gradeComponents: GradeComponent[];
+  gradingPolicies: GradingPolicy[];
+  scheduleSlots: ScheduleSlot[];
   studentFeed: StudentFeedEntry[];
   rewards: ShopReward[];
   redemptions: RedemptionRecord[];

@@ -7,14 +7,19 @@ import {
   DynamicPath,
   EngagementPillar,
   GradeComponent,
+  GradingPolicy,
   LoloverseState,
   PathEvaluation,
   PathStep,
   PathSubmission,
   PathTeam,
+  ScheduleSlot,
+  SchoolSegment,
   Student,
   StudentFeedEntry,
   StudyRoom,
+  WeekDay,
+  WorkShift,
 } from "@/types";
 import {
   deriveBnccFromPillars,
@@ -576,7 +581,61 @@ function slugifyFirstName(name: string): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+export const SEGMENT_LABELS: Record<SchoolSegment, string> = {
+  infantil: "Educação Infantil",
+  fund1: "Fundamental I",
+  fund2: "Fundamental II",
+  em: "Ensino Médio",
+  todos: "Toda a Escola",
+};
+
+export const WORK_SHIFT_OPTIONS: WorkShift[] = [
+  "Manhã",
+  "Tarde",
+  "Noite",
+  "Integral",
+  "Todos",
+];
+
+export const WEEK_DAYS: Array<{ key: WeekDay; label: string; short: string }> = [
+  { key: "seg", label: "Segunda-feira", short: "Seg" },
+  { key: "ter", label: "Terça-feira", short: "Ter" },
+  { key: "qua", label: "Quarta-feira", short: "Qua" },
+  { key: "qui", label: "Quinta-feira", short: "Qui" },
+  { key: "sex", label: "Sexta-feira", short: "Sex" },
+];
+
+export function matchesCoordinatorScope(
+  coord: { segment?: SchoolSegment; workShift?: WorkShift } | null | undefined,
+  target: { segment?: SchoolSegment; workShift?: WorkShift; period?: WorkShift }
+): boolean {
+  if (!coord) return true;
+  const cSeg = coord.segment || "todos";
+  const cShift = coord.workShift || "Todos";
+  const tSeg = target.segment || "todos";
+  const tShift = target.workShift || target.period || "Todos";
+
+  const segOk = cSeg === "todos" || tSeg === "todos" || cSeg === tSeg;
+  const shiftOk = cShift === "Todos" || tShift === "Todos" || cShift === tShift;
+  return segOk && shiftOk;
+}
+
 const INITIAL_ACCOUNTS: Account[] = [
+  {
+    id: "acc-admin-diogo",
+    username: "admin.escola",
+    email: "admin@loloverse.edu.br",
+    password: "123",
+    displayName: "Admin Escolar",
+    role: "admin",
+    avatarSeed: 19,
+    avatarColor: "#18181B",
+    segment: "todos",
+    workShift: "Todos",
+    active: true,
+    allowPasswordLogin: true,
+    bio: "Administração Geral · Contas, Séries & Fórmulas",
+  },
   {
     id: "acc-prof-rafael",
     username: "prof.rafael",
@@ -587,7 +646,11 @@ const INITIAL_ACCOUNTS: Account[] = [
     avatarSeed: 20,
     avatarColor: "#3B82F6",
     classId: "class-8a",
-    bio: "Professor de Robótica, Maker e Empreendedorismo Digital",
+    segment: "fund2",
+    workShift: "Manhã",
+    active: true,
+    allowPasswordLogin: true,
+    bio: "Professor de Robótica, Maker e Matemática",
   },
   {
     id: "acc-prof-camila",
@@ -599,7 +662,27 @@ const INITIAL_ACCOUNTS: Account[] = [
     avatarSeed: 22,
     avatarColor: "#10B981",
     classId: "class-9b",
+    segment: "fund2",
+    workShift: "Manhã",
+    active: true,
+    allowPasswordLogin: true,
     bio: "Professora de Ciências & Sustentabilidade",
+  },
+  {
+    id: "acc-prof-marcos",
+    username: "prof.marcos",
+    email: "marcos@loloverse.edu.br",
+    password: "123",
+    displayName: "Prof. Marcos Tavares",
+    role: "teacher",
+    avatarSeed: 23,
+    avatarColor: "#FB923C",
+    classId: "class-1em",
+    segment: "em",
+    workShift: "Tarde",
+    active: true,
+    allowPasswordLogin: true,
+    bio: "Professor de Empreendedorismo & Projeto de Vida (EM)",
   },
   {
     id: "acc-coord-helena",
@@ -610,10 +693,15 @@ const INITIAL_ACCOUNTS: Account[] = [
     role: "coordinator",
     avatarSeed: 21,
     avatarColor: "#8B5CF6",
-    bio: "Coordenação Pedagógica & Governança Gamificada",
+    segment: "fund2",
+    workShift: "Manhã",
+    active: true,
+    allowPasswordLogin: true,
+    bio: "Coordenação Pedagógica · Fundamental II (Manhã)",
   },
   ...INITIAL_STUDENTS.map((stu): Account => {
     const first = slugifyFirstName(stu.name);
+    const isEm = stu.classId === "class-1em";
     return {
       id: `acc-${stu.id}`,
       username: first,
@@ -625,6 +713,10 @@ const INITIAL_ACCOUNTS: Account[] = [
       avatarColor: stu.avatarColor,
       studentId: stu.id,
       classId: stu.classId,
+      segment: isEm ? "em" : "fund2",
+      workShift: isEm ? "Tarde" : "Manhã",
+      active: true,
+      allowPasswordLogin: true,
       bio: stu.roleTitle,
     };
   }),
@@ -1084,6 +1176,115 @@ const INITIAL_STUDENT_FEED: StudentFeedEntry[] = [
   },
 ];
 
+const INITIAL_GRADING_POLICIES: GradingPolicy[] = [
+  {
+    id: "gp-fund2",
+    name: "Regra Oficial · Fundamental II",
+    segment: "fund2",
+    termSystem: "bimestral",
+    formulaType: "ponderada",
+    passingGrade: 6.0,
+    weightExams: 50,
+    weightActivities: 20,
+    weightDynamicPaths: 30,
+    rounding: "decimo",
+    active: true,
+  },
+  {
+    id: "gp-em",
+    name: "Regra Oficial · Ensino Médio",
+    segment: "em",
+    termSystem: "trimestral",
+    formulaType: "ponderada",
+    passingGrade: 7.0,
+    weightExams: 60,
+    weightActivities: 15,
+    weightDynamicPaths: 25,
+    rounding: "meio_ponto",
+    active: true,
+  },
+];
+
+const INITIAL_SCHEDULE_SLOTS: ScheduleSlot[] = [
+  {
+    id: "slot-8a-seg-1",
+    classId: "class-8a",
+    dayOfWeek: "seg",
+    slotIndex: 1,
+    subject: "Robótica & Maker",
+    teacherId: "acc-prof-rafael",
+    teacherName: "Prof. Rafael Andrade",
+    room: "Lab Maker 02",
+    bnccFocus: "dig",
+  },
+  {
+    id: "slot-8a-seg-2",
+    classId: "class-8a",
+    dayOfWeek: "seg",
+    slotIndex: 2,
+    subject: "Matemática Aplicada",
+    teacherId: "acc-prof-rafael",
+    teacherName: "Prof. Rafael Andrade",
+    room: "Sala 08",
+    bnccFocus: "con",
+  },
+  {
+    id: "slot-8a-ter-1",
+    classId: "class-8a",
+    dayOfWeek: "ter",
+    slotIndex: 1,
+    subject: "Ciências Investigativas",
+    teacherId: "acc-prof-camila",
+    teacherName: "Profa. Camila Nogueira",
+    room: "Lab Ciências",
+    bnccFocus: "inv",
+  },
+  {
+    id: "slot-8a-qua-3",
+    classId: "class-8a",
+    dayOfWeek: "qua",
+    slotIndex: 3,
+    subject: "Oficina de Percurso Dinâmico",
+    teacherId: "acc-prof-rafael",
+    teacherName: "Prof. Rafael Andrade",
+    room: "Lab Maker 02",
+    bnccFocus: "arg",
+  },
+  {
+    id: "slot-9b-seg-3",
+    classId: "class-9b",
+    dayOfWeek: "seg",
+    slotIndex: 3,
+    subject: "Ciências & Sustentabilidade",
+    teacherId: "acc-prof-camila",
+    teacherName: "Profa. Camila Nogueira",
+    room: "Sala 14",
+    bnccFocus: "inv",
+  },
+  {
+    id: "slot-9b-qui-2",
+    classId: "class-9b",
+    dayOfWeek: "qui",
+    slotIndex: 2,
+    subject: "Horta & Laboratório de Solo",
+    teacherId: "acc-prof-camila",
+    teacherName: "Profa. Camila Nogueira",
+    room: "Horta Escolar",
+    bnccFocus: "elo",
+  },
+  {
+    id: "slot-1em-seg-1",
+    classId: "class-1em",
+    dayOfWeek: "seg",
+    slotIndex: 1,
+    subject: "Empreendedorismo Digital",
+    teacherId: "acc-prof-marcos",
+    teacherName: "Prof. Marcos Tavares",
+    room: "Espaço Inovação",
+    bnccFocus: "dig",
+  },
+];
+
 export const INITIAL_STATE: LoloverseState = {
   accounts: INITIAL_ACCOUNTS,
   studyRooms: INITIAL_STUDY_ROOMS,
@@ -1096,33 +1297,47 @@ export const INITIAL_STATE: LoloverseState = {
   pathSubmissions: INITIAL_PATH_SUBMISSIONS,
   pathEvaluations: INITIAL_PATH_EVALUATIONS,
   gradeComponents: INITIAL_GRADE_COMPONENTS,
+  gradingPolicies: INITIAL_GRADING_POLICIES,
+  scheduleSlots: INITIAL_SCHEDULE_SLOTS,
   studentFeed: INITIAL_STUDENT_FEED,
   selectedClassId: "class-8a",
   activeStudentId: "stu-sofia",
   classes: [
     {
       id: "class-8a",
+      code: "8a",
       name: "8º Ano A - Robótica & Maker",
       grade: "8º Ano EF",
+      segment: "fund2",
+      teacherId: "acc-prof-rafael",
       teacherName: "Prof. Rafael Andrade",
       period: "Manhã",
       room: "Lab Maker 02",
+      active: true,
     },
     {
       id: "class-9b",
+      code: "9b",
       name: "9º Ano B - Ciências & Sustentabilidade",
       grade: "9º Ano EF",
+      segment: "fund2",
+      teacherId: "acc-prof-camila",
       teacherName: "Profa. Camila Nogueira",
       period: "Manhã",
       room: "Sala 14",
+      active: true,
     },
     {
       id: "class-1em",
+      code: "1em",
       name: "1º Ano EM - Empreendedorismo Digital",
       grade: "1º Ano EM",
-      teacherName: "Prof. Rafael Andrade",
+      segment: "em",
+      teacherId: "acc-prof-marcos",
+      teacherName: "Prof. Marcos Tavares",
       period: "Tarde",
       room: "Espaço Inovação",
+      active: true,
     },
   ],
   students: INITIAL_STUDENTS,

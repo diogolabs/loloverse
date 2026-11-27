@@ -13,6 +13,8 @@ import {
   DynamicPath,
   EngagementPillar,
   GradeComponent,
+  GradingFormulaType,
+  GradingPolicy,
   InviteRecord,
   PathCycle,
   PathEvaluation,
@@ -27,10 +29,15 @@ import {
   Quest,
   QuestType,
   RedemptionRecord,
+  RoundingRule,
   RubricLevel,
+  ScheduleSlot,
+  SchoolSegment,
   ShopReward,
   Student,
   StudyRoom,
+  WeekDay,
+  WorkShift,
 } from "@/types";
 import {
   BNCC_ATTRIBUTE_KEYS,
@@ -115,18 +122,68 @@ export function mapUserToAccount(
     avatarConfig: parseAvatarConfig(rec.avatarConfig),
     studentId: studentByUserId.get(rec.id),
     classId: rec.class || undefined,
+    segment: (rec.segment || "todos") as SchoolSegment,
+    workShift: (rec.workShift || "Todos") as WorkShift,
+    active: rec.active !== false,
+    allowPasswordLogin: Boolean(rec.allowPasswordLogin),
     bio: rec.bio || undefined,
   };
 }
 
 export function mapClass(rec: RecordModel): ClassRoom {
+  const grade = rec.grade || "";
+  const inferredSegment: SchoolSegment =
+    (rec.segment as SchoolSegment) ||
+    (grade.toLowerCase().includes("em")
+      ? "em"
+      : grade.toLowerCase().includes("infantil")
+      ? "infantil"
+      : /^[1-5]/.test(grade.trim())
+      ? "fund1"
+      : "fund2");
   return {
     id: rec.id,
+    code: rec.code || undefined,
     name: rec.name || "Turma",
-    grade: rec.grade || "",
+    grade,
+    segment: inferredSegment,
+    teacherId: rec.teacher || undefined,
     teacherName: rec.teacherName || "Docente",
-    period: rec.period || "Manhã",
+    period: (rec.period || "Manhã") as WorkShift,
     room: rec.room || "",
+    active: rec.active !== false,
+  };
+}
+
+export function mapGradingPolicy(rec: RecordModel): GradingPolicy {
+  return {
+    id: rec.id,
+    name: rec.name || "Fórmula Escolar",
+    segment: (rec.segment || "todos") as SchoolSegment,
+    termSystem: (rec.termSystem || "bimestral") as GradingPolicy["termSystem"],
+    formulaType: (rec.formulaType || "ponderada") as GradingFormulaType,
+    passingGrade: Number(rec.passingGrade ?? 6.0),
+    weightExams: Number(rec.weightExams ?? 50),
+    weightActivities: Number(rec.weightActivities ?? 20),
+    weightDynamicPaths: Number(rec.weightDynamicPaths ?? 30),
+    rounding: (rec.rounding || "decimo") as RoundingRule,
+    active: rec.active !== false,
+  };
+}
+
+export function mapScheduleSlot(rec: RecordModel): ScheduleSlot {
+  return {
+    id: rec.id,
+    classId: rec.class || "",
+    dayOfWeek: (rec.dayOfWeek || "seg") as WeekDay,
+    slotIndex: Number(rec.slotIndex || 1),
+    subject: rec.subject || "Disciplina",
+    teacherId: rec.teacher || undefined,
+    teacherName: rec.teacherName || "Docente",
+    room: rec.room || "",
+    bnccFocus: rec.bnccFocus
+      ? legacyPillarToBncc(rec.bnccFocus)
+      : undefined,
   };
 }
 

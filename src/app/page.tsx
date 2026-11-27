@@ -8,6 +8,7 @@ import { ToastContainer } from "@/components/shared/ToastContainer";
 import { TeacherView } from "@/components/teacher/TeacherView";
 import { StudentView } from "@/components/student/StudentView";
 import { CoordinatorView } from "@/components/coordinator/CoordinatorView";
+import { AdminView } from "@/components/admin/AdminView";
 
 export default function HomePage() {
   const { currentAccount, hydrated, isBackendConnected } = useLoloverse();
@@ -38,8 +39,8 @@ export default function HomePage() {
       <main className="flex-1 w-full max-w-7xl mx-auto px-3 sm:px-6 py-6">
         {currentAccount.role === "teacher" && <TeacherView />}
         {currentAccount.role === "student" && <StudentView />}
-        {(currentAccount.role === "coordinator" ||
-          currentAccount.role === "admin") && <CoordinatorView />}
+        {currentAccount.role === "coordinator" && <CoordinatorView />}
+        {currentAccount.role === "admin" && <AdminView />}
       </main>
 
       <footer className="mt-8 border-t-2 border-zinc-900 bg-white/80">

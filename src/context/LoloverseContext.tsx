@@ -26,6 +26,7 @@ import {
   mapClass,
   mapDynamicPath,
   mapGradeComponent,
+  mapGradingPolicy,
   mapInvite,
   mapLog,
   mapMessage,
@@ -36,6 +37,7 @@ import {
   mapQuest,
   mapRedemption,
   mapReward,
+  mapScheduleSlot,
   mapStudent,
   mapStudyRoom,
   mapTopic,
@@ -53,6 +55,8 @@ import {
   DynamicPath,
   EngagementPillar,
   GradeComponent,
+  GradingFormulaType,
+  GradingPolicy,
   InviteRecord,
   LoloverseState,
   PathCycle,
@@ -67,16 +71,21 @@ import {
   Persona,
   Quest,
   QuestType,
+  RoundingRule,
   RubricLevel,
+  ScheduleSlot,
+  SchoolSegment,
   ShopReward,
   Student,
   StudentFeedEntry,
   StudyRoom,
   ToastItem,
+  WeekDay,
+  WorkShift,
 } from "@/types";
 
-const STORAGE_KEY = "loloverse_mvp_state_v5";
-const SESSION_KEY = "loloverse_session_account_id_v5";
+const STORAGE_KEY = "loloverse_mvp_state_v6";
+const SESSION_KEY = "loloverse_session_account_id_v6";
 const OAUTH_PENDING_KEY = "loloverse_oauth2_pending_v1";
 
 interface PendingOAuth2 {
@@ -102,6 +111,8 @@ const EMPTY_STATE: LoloverseState = {
   pathSubmissions: [],
   pathEvaluations: [],
   gradeComponents: [],
+  gradingPolicies: [],
+  scheduleSlots: [],
   studentFeed: [],
   rewards: [],
   redemptions: [],
@@ -307,6 +318,64 @@ interface LoloverseContextValue {
     qualitativeNote: string;
     publishToGradebook?: boolean;
   }) => void;
+  updateUserAccess: (
+    userId: string,
+    updates: {
+      role?: Persona;
+      segment?: SchoolSegment;
+      workShift?: WorkShift;
+      classId?: string;
+      active?: boolean;
+      allowPasswordLogin?: boolean;
+    }
+  ) => void;
+  createClassRoom: (input: {
+    code: string;
+    name: string;
+    grade: string;
+    segment: SchoolSegment;
+    period: WorkShift;
+    room: string;
+    teacherId?: string;
+    teacherName: string;
+  }) => void;
+  updateClassRoom: (
+    classId: string,
+    updates: Partial<{
+      name: string;
+      grade: string;
+      segment: SchoolSegment;
+      period: WorkShift;
+      room: string;
+      teacherId: string;
+      teacherName: string;
+      active: boolean;
+    }>
+  ) => void;
+  saveGradingPolicy: (input: {
+    id?: string;
+    name: string;
+    segment: SchoolSegment;
+    termSystem: "bimestral" | "trimestral";
+    formulaType: GradingFormulaType;
+    passingGrade: number;
+    weightExams: number;
+    weightActivities: number;
+    weightDynamicPaths: number;
+    rounding: RoundingRule;
+    active?: boolean;
+  }) => void;
+  upsertScheduleSlot: (input: {
+    classId: string;
+    dayOfWeek: WeekDay;
+    slotIndex: number;
+    subject: string;
+    teacherId?: string;
+    teacherName: string;
+    room: string;
+    bnccFocus?: BnccAttributeKey;
+  }) => void;
+  deleteScheduleSlot: (slotId: string) => void;
   resetDemoData: () => void;
   toasts: ToastItem[];
   dismissToast: (id: string) => void;
@@ -465,6 +534,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       submissionRecs,
       evaluationRecs,
       gradeCompRecs,
+      policyRecs,
+      slotRecs,
     ] = await Promise.all([
       safeFullList("classes", { sort: "name" }),
       safeFullList("students", { sort: "name" }),
@@ -490,6 +561,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       safeFullList("path_submissions", { sort: "-created" }),
       safeFullList("path_evaluations", { sort: "-updated" }),
       safeFullList("grade_components", { sort: "-created" }),
+      safeFullList("grading_policies", { sort: "name" }),
+      safeFullList("schedule_slots", { sort: "dayOfWeek,slotIndex" }),
     ]);
 
     const studentByUserId = new Map<string, string>();
@@ -533,6 +606,8 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       pathSubmissions: submissionRecs.map(mapPathSubmission),
       pathEvaluations: evaluationRecs.map(mapPathEvaluation),
       gradeComponents: gradeCompRecs.map(mapGradeComponent),
+      gradingPolicies: policyRecs.map(mapGradingPolicy),
+      scheduleSlots: slotRecs.map(mapScheduleSlot),
       studentFeed: prev.studentFeed,
       rewards: rewardRecs.map(mapReward),
       redemptions: redemptionRecs.map(mapRedemption),
@@ -640,6 +715,9 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
       "path_teams",
       "path_submissions",
       "path_evaluations",
+      "grading_policies",
+      "schedule_slots",
+      "classes",
       "shop_rewards",
       "redemptions",
       "study_rooms",
@@ -3007,6 +3085,367 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     [loadFromPocketBase, pushToast]
   );
 
+  // ===========================================================================
+  // ADMINISTRAÇÃO ESCOLAR (CONTAS, TURMAS/SÉRIES, FÓRMULAS) & GRADE CURRICULAR
+  // ===========================================================================
+  const updateUserAccess = useCallback(
+    (
+      userId: string,
+      updates: {
+        role?: Persona;
+        segment?: SchoolSegment;
+        workShift?: WorkShift;
+        classId?: string;
+        active?: boolean;
+        allowPasswordLogin?: boolean;
+      }
+    ) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.send(`/api/loloverse/admin/users/${userId}`, {
+          method: "POST",
+          body: updates,
+        })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Permissões atualizadas!", "Conta salva no servidor.", "success");
+          })
+          .catch((err) =>
+            pushToast(
+              "Erro ao atualizar conta",
+              extractPbError(err, "Apenas administradores podem alterar permissões."),
+              "danger"
+            )
+          );
+        return;
+      }
+
+      const target = stateRef.current.accounts.find((a) => a.id === userId);
+      setState((prev) => ({
+        ...prev,
+        accounts: prev.accounts.map((a) =>
+          a.id === userId ? { ...a, ...updates } : a
+        ),
+        logs: [
+          {
+            id: uid("log"),
+            timestamp: nowLabel(),
+            actor: currentAccountRef.current?.displayName || "Admin",
+            target: target?.displayName || userId,
+            action: "Atualizou permissões / escopo da conta",
+            category: "seguranca" as const,
+            deltaSummary: [
+              updates.role ? `Cargo: ${updates.role}` : "",
+              updates.segment ? `Seg: ${updates.segment}` : "",
+              updates.workShift ? `Turno: ${updates.workShift}` : "",
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          },
+          ...prev.logs,
+        ].slice(0, 60),
+      }));
+      pushToast("Permissões atualizadas!", target?.displayName, "success");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const createClassRoom = useCallback(
+    (input: {
+      code: string;
+      name: string;
+      grade: string;
+      segment: SchoolSegment;
+      period: WorkShift;
+      room: string;
+      teacherId?: string;
+      teacherName: string;
+    }) => {
+      const cleanName = input.name.trim();
+      const cleanCode = toSlug(input.code || cleanName).slice(0, 30);
+      if (!cleanName || !cleanCode) return;
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("classes")
+          .create({
+            code: cleanCode,
+            name: cleanName,
+            grade: input.grade.trim() || "Série",
+            segment: input.segment,
+            period: input.period === "Todos" ? "Manhã" : input.period,
+            room: input.room.trim() || "Sala 01",
+            teacher: input.teacherId || "",
+            teacherName: input.teacherName.trim() || "Docente Titular",
+            active: true,
+          })
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Turma criada!", cleanName, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao criar turma", extractPbError(err, "Verifique código único."), "danger")
+          );
+        return;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        classes: [
+          ...prev.classes,
+          {
+            id: uid("class"),
+            code: cleanCode,
+            name: cleanName,
+            grade: input.grade.trim() || "Série",
+            segment: input.segment,
+            period: input.period === "Todos" ? "Manhã" : input.period,
+            room: input.room.trim() || "Sala 01",
+            teacherId: input.teacherId,
+            teacherName: input.teacherName.trim() || "Docente Titular",
+            active: true,
+          },
+        ],
+      }));
+      pushToast("Turma criada!", cleanName, "success");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const updateClassRoom = useCallback(
+    (
+      classId: string,
+      updates: Partial<{
+        name: string;
+        grade: string;
+        segment: SchoolSegment;
+        period: WorkShift;
+        room: string;
+        teacherId: string;
+        teacherName: string;
+        active: boolean;
+      }>
+    ) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        const payload: Record<string, unknown> = { ...updates };
+        if (updates.teacherId !== undefined) {
+          payload.teacher = updates.teacherId;
+          delete payload.teacherId;
+        }
+        pb.collection("classes")
+          .update(classId, payload)
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Turma atualizada!", updates.name, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao atualizar turma", extractPbError(err, "Sem permissão."), "danger")
+          );
+        return;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        classes: prev.classes.map((c) =>
+          c.id === classId ? { ...c, ...updates } : c
+        ),
+      }));
+      pushToast("Turma atualizada!", updates.name, "success");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const saveGradingPolicy = useCallback(
+    (input: {
+      id?: string;
+      name: string;
+      segment: SchoolSegment;
+      termSystem: "bimestral" | "trimestral";
+      formulaType: GradingFormulaType;
+      passingGrade: number;
+      weightExams: number;
+      weightActivities: number;
+      weightDynamicPaths: number;
+      rounding: RoundingRule;
+      active?: boolean;
+    }) => {
+      const cleanName = input.name.trim();
+      if (!cleanName) return;
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        const payload = {
+          name: cleanName,
+          segment: input.segment,
+          termSystem: input.termSystem,
+          formulaType: input.formulaType,
+          passingGrade: input.passingGrade,
+          weightExams: input.weightExams,
+          weightActivities: input.weightActivities,
+          weightDynamicPaths: input.weightDynamicPaths,
+          rounding: input.rounding,
+          active: input.active !== false,
+        };
+        const req = input.id
+          ? pb.collection("grading_policies").update(input.id, payload)
+          : pb.collection("grading_policies").create(payload);
+        req
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Fórmula de média salva!", cleanName, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao salvar fórmula", extractPbError(err, "Apenas Admin."), "danger")
+          );
+        return;
+      }
+
+      const policy: GradingPolicy = {
+        id: input.id || uid("gp"),
+        name: cleanName,
+        segment: input.segment,
+        termSystem: input.termSystem,
+        formulaType: input.formulaType,
+        passingGrade: input.passingGrade,
+        weightExams: input.weightExams,
+        weightActivities: input.weightActivities,
+        weightDynamicPaths: input.weightDynamicPaths,
+        rounding: input.rounding,
+        active: input.active !== false,
+      };
+      setState((prev) => ({
+        ...prev,
+        gradingPolicies: input.id
+          ? prev.gradingPolicies.map((p) => (p.id === input.id ? policy : p))
+          : [policy, ...prev.gradingPolicies],
+      }));
+      pushToast("Fórmula de média salva!", cleanName, "success");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const upsertScheduleSlot = useCallback(
+    (input: {
+      classId: string;
+      dayOfWeek: WeekDay;
+      slotIndex: number;
+      subject: string;
+      teacherId?: string;
+      teacherName: string;
+      room: string;
+      bnccFocus?: BnccAttributeKey;
+    }) => {
+      const cleanSubject = input.subject.trim();
+      if (!cleanSubject) return;
+
+      // Detector de conflito de professor no mesmo dia e horário em outra turma
+      if (input.teacherId) {
+        const conflict = stateRef.current.scheduleSlots.find(
+          (s) =>
+            s.teacherId === input.teacherId &&
+            s.dayOfWeek === input.dayOfWeek &&
+            s.slotIndex === input.slotIndex &&
+            s.classId !== input.classId
+        );
+        if (conflict) {
+          const otherClass = stateRef.current.classes.find(
+            (c) => c.id === conflict.classId
+          );
+          pushToast(
+            "Conflito de horário detectado!",
+            `${input.teacherName} já está alocado(a) em ${otherClass?.name || "outra turma"} neste horário.`,
+            "danger"
+          );
+          return;
+        }
+      }
+
+      const existing = stateRef.current.scheduleSlots.find(
+        (s) =>
+          s.classId === input.classId &&
+          s.dayOfWeek === input.dayOfWeek &&
+          s.slotIndex === input.slotIndex
+      );
+
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        const payload = {
+          class: input.classId,
+          dayOfWeek: input.dayOfWeek,
+          slotIndex: input.slotIndex,
+          subject: cleanSubject,
+          teacher: input.teacherId || "",
+          teacherName: input.teacherName.trim() || "Docente",
+          room: input.room.trim() || "Sala",
+          bnccFocus: input.bnccFocus || "con",
+        };
+        const req = existing
+          ? pb.collection("schedule_slots").update(existing.id, payload)
+          : pb.collection("schedule_slots").create(payload);
+        req
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Horário salvo na grade!", cleanSubject, "success");
+          })
+          .catch((err) =>
+            pushToast("Erro ao salvar horário", extractPbError(err, "Tente novamente."), "danger")
+          );
+        return;
+      }
+
+      const slot: ScheduleSlot = {
+        id: existing?.id || uid("slot"),
+        classId: input.classId,
+        dayOfWeek: input.dayOfWeek,
+        slotIndex: input.slotIndex,
+        subject: cleanSubject,
+        teacherId: input.teacherId,
+        teacherName: input.teacherName.trim() || "Docente",
+        room: input.room.trim() || "Sala",
+        bnccFocus: input.bnccFocus,
+      };
+      setState((prev) => ({
+        ...prev,
+        scheduleSlots: existing
+          ? prev.scheduleSlots.map((s) => (s.id === existing.id ? slot : s))
+          : [...prev.scheduleSlots, slot],
+      }));
+      pushToast("Horário salvo na grade!", cleanSubject, "success");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
+  const deleteScheduleSlot = useCallback(
+    (slotId: string) => {
+      if (isPocketBaseEnabled) {
+        const pb = getPocketBase();
+        if (!pb) return;
+        pb.collection("schedule_slots")
+          .delete(slotId)
+          .then(() => {
+            loadFromPocketBase().catch(() => {});
+            pushToast("Horário removido da grade", undefined, "info");
+          })
+          .catch((err) =>
+            pushToast("Erro ao remover horário", extractPbError(err, "Tente novamente."), "danger")
+          );
+        return;
+      }
+      setState((prev) => ({
+        ...prev,
+        scheduleSlots: prev.scheduleSlots.filter((s) => s.id !== slotId),
+      }));
+      pushToast("Horário removido da grade", undefined, "info");
+    },
+    [loadFromPocketBase, pushToast]
+  );
+
   const resetDemoData = useCallback(() => {
     if (isPocketBaseEnabled) return;
     setState(INITIAL_STATE);
@@ -3069,6 +3508,12 @@ export function LoloverseProvider({ children }: { children: React.ReactNode }) {
     submitPathStep,
     reviewPathSubmission,
     evaluateStudentPath,
+    updateUserAccess,
+    createClassRoom,
+    updateClassRoom,
+    saveGradingPolicy,
+    upsertScheduleSlot,
+    deleteScheduleSlot,
     resetDemoData,
     toasts,
     dismissToast,

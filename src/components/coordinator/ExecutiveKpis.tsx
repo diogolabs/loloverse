@@ -11,31 +11,38 @@ import {
 import { useLoloverse } from "@/context/LoloverseContext";
 import { computeAverageBnccIndex } from "@/data/bnccAndPaths";
 
-export function ExecutiveKpis() {
+export function ExecutiveKpis({
+  allowedClassIds,
+}: {
+  allowedClassIds?: string[];
+}) {
   const { state } = useLoloverse();
-  const totalStudents = Math.max(1, state.students.length);
+  const scopedStudents = allowedClassIds
+    ? state.students.filter((s) => allowedClassIds.includes(s.classId))
+    : state.students;
+  const totalStudents = Math.max(1, scopedStudents.length);
 
   const avgAttendance = Math.round(
-    state.students.reduce((acc, s) => acc + s.attendanceRate, 0) / totalStudents
+    scopedStudents.reduce((acc, s) => acc + s.attendanceRate, 0) / totalStudents
   );
 
   const avgDelivery = Math.round(
-    state.students.reduce((acc, s) => acc + s.deliveryRate, 0) / totalStudents
+    scopedStudents.reduce((acc, s) => acc + s.deliveryRate, 0) / totalStudents
   );
 
   const avgBnccIndex = (
-    state.students.reduce(
+    scopedStudents.reduce(
       (acc, s) => acc + computeAverageBnccIndex(s.bnccAttributes),
       0
     ) / totalStudents
   ).toFixed(1);
 
-  const totalGoldInCirculation = state.students.reduce(
+  const totalGoldInCirculation = scopedStudents.reduce(
     (acc, s) => acc + s.gold,
     0
   );
 
-  const presentToday = state.students.filter(
+  const presentToday = scopedStudents.filter(
     (s) => s.attendanceToday === "presente"
   ).length;
 
@@ -43,7 +50,7 @@ export function ExecutiveKpis() {
     {
       label: "Frequência Média",
       value: `${avgAttendance}%`,
-      sub: `${presentToday}/${state.students.length} presentes hoje`,
+      sub: `${presentToday}/${scopedStudents.length} presentes hoje`,
       bg: "bg-emerald-100",
       iconBg: "bg-[#10B981] text-zinc-950",
       icon: <Users className="w-5 h-5" />,

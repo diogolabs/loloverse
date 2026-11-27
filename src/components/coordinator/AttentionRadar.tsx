@@ -23,9 +23,17 @@ function getSuggestedIntervention(student: Student): string {
   return "Oferecer micro-missão de vitória rápida (+25 XP) para restaurar confiança e recuperar Saúde Acadêmica (HP).";
 }
 
-export function AttentionRadar() {
+export function AttentionRadar({
+  allowedClassIds,
+}: {
+  allowedClassIds?: string[];
+}) {
   const { state, registerIntervention } = useLoloverse();
   const [notes, setNotes] = useState<Record<string, string>>({});
+
+  const scopedStudents = allowedClassIds
+    ? state.students.filter((s) => allowedClassIds.includes(s.classId))
+    : state.students;
 
   const hasCycle1Alert = (student: Student) => {
     const ev = state.pathEvaluations.find((e) => e.studentId === student.id);
@@ -48,7 +56,7 @@ export function AttentionRadar() {
     );
   };
 
-  const atRiskStudents = state.students
+  const atRiskStudents = scopedStudents
     .filter((s) => {
       const gradeDrop = s.previousAverage - s.bimesterAverage;
       return (
